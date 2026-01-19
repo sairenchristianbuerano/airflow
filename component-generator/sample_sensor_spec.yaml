@@ -1,0 +1,65 @@
+# Sample Airflow Sensor Specification
+
+name: CustomFileExistsSensor
+display_name: "Custom File Exists Sensor"
+description: "Wait for a file to exist at a specified path, with support for pattern matching and size validation"
+category: file
+component_type: sensor
+platforms:
+  - airflow
+
+requirements:
+  - "Check if file exists at specified path"
+  - "Support glob patterns for file matching"
+  - "Validate minimum file size if specified"
+  - "Support both local and remote file systems"
+  - "Poke at regular intervals until file found"
+
+inputs:
+  - name: filepath
+    type: str
+    description: "Path to the file (supports glob patterns)"
+    required: true
+    template_field: true
+
+  - name: min_size
+    type: Optional[int]
+    description: "Minimum file size in bytes"
+    required: false
+
+  - name: fs_conn_id
+    type: str
+    description: "Connection ID for file system (if remote)"
+    required: false
+    default: "fs_default"
+
+config_params:
+  - name: poke_interval
+    type: int
+    description: "Time between poke attempts in seconds"
+    default: "60"
+
+  - name: timeout
+    type: int
+    description: "Maximum time to wait in seconds"
+    default: "3600"
+
+  - name: mode
+    type: str
+    description: "Sensor mode: poke or reschedule"
+    default: "poke"
+
+dependencies:
+  - "apache-airflow>=2.0.0"
+
+base_class: "BaseSensor"
+template_fields: ["filepath"]
+ui_color: "#f0ede4"
+ui_fgcolor: "#000"
+
+poke_interval: 60
+timeout: 3600
+mode: "poke"
+
+author: "Airflow Component Factory"
+version: "1.0.0"

@@ -1,0 +1,262 @@
+# Comprehensive Apache Airflow Component Specification Example
+# ============================================================
+# This example demonstrates all available fields in the team's standard format
+# Use this as a reference when creating your own component specifications
+
+# Basic Component Information
+name: "CustomApiOperator"
+display_name: "Custom API Operator"
+description: "A production-ready operator for making authenticated API calls with retry logic, response parsing, and error handling"
+category: "http"
+component_type: "operator"
+platforms:
+  - airflow
+
+# UI Configuration
+icon: "cloud"
+ui_color: "#4A90E2"
+ui_fgcolor: "#FFFFFF"
+
+# Inputs
+# ------
+# Define all input parameters users will configure when using this operator
+inputs:
+  - name: "api_endpoint"
+    type: "str"
+    display_name: "API Endpoint"
+    description: "Full URL of the API endpoint to call"
+    required: true
+    default: ""
+    template_field: true  # Supports Jinja templating
+
+  - name: "http_method"
+    type: "str"
+    display_name: "HTTP Method"
+    description: "HTTP method to use (GET, POST, PUT, DELETE, PATCH)"
+    required: false
+    default: "GET"
+    template_field: false
+
+  - name: "request_data"
+    type: "Optional[Dict[str, Any]]"
+    display_name: "Request Data"
+    description: "JSON data to send in request body (for POST/PUT/PATCH)"
+    required: false
+    default: null
+    template_field: true
+
+  - name: "headers"
+    type: "Dict[str, str]"
+    display_name: "Custom Headers"
+    description: "Additional HTTP headers to include in the request"
+    required: false
+    default: "{}"
+    template_field: true
+
+  - name: "query_params"
+    type: "Optional[Dict[str, str]]"
+    display_name: "Query Parameters"
+    description: "URL query parameters"
+    required: false
+    default: null
+    template_field: true
+
+  - name: "timeout"
+    type: "int"
+    display_name: "Request Timeout"
+    description: "Timeout for the HTTP request in seconds"
+    required: false
+    default: 30
+    template_field: false
+
+  - name: "verify_ssl"
+    type: "bool"
+    display_name: "Verify SSL"
+    description: "Whether to verify SSL certificates"
+    required: false
+    default: true
+    template_field: false
+
+# Configuration Parameters
+# -------------------------
+# Parameters for __init__ but not task-level configuration
+config_params:
+  - name: "http_conn_id"
+    type: "str"
+    description: "Airflow HTTP connection ID for authentication"
+    default: "http_default"
+
+  - name: "retry_limit"
+    type: "int"
+    description: "Maximum number of retry attempts for failed requests"
+    default: "3"
+
+  - name: "retry_delay"
+    type: "int"
+    description: "Delay in seconds between retry attempts"
+    default: "60"
+
+  - name: "response_check"
+    type: "Optional[Callable]"
+    description: "Optional function to check response validity"
+    default: "None"
+
+# Outputs
+# -------
+# Description of what this operator returns
+outputs:
+  - name: "response"
+    type: "Dict[str, Any]"
+    description: "Parsed JSON response from the API"
+    method: "execute"
+
+  - name: "status_code"
+    type: "int"
+    description: "HTTP status code of the response"
+    method: "execute"
+
+# Requirements
+# ------------
+# Natural language description of functionality
+requirements:
+  - "Make authenticated HTTP requests to external APIs"
+  - "Support all standard HTTP methods (GET, POST, PUT, DELETE, PATCH)"
+  - "Parse JSON responses automatically"
+  - "Handle authentication via Airflow connections"
+  - "Implement retry logic with exponential backoff"
+  - "Validate response status codes and content"
+  - "Log all request and response details for debugging"
+  - "Handle connection timeouts gracefully"
+  - "Support custom headers for API-specific requirements"
+  - "Push response data to XCom for downstream tasks"
+
+# Dependencies
+# ------------
+dependencies:
+  - "apache-airflow>=2.0.0"
+  - "apache-airflow-providers-http>=4.0.0"
+  - "requests>=2.28.0"
+
+# Airflow-Specific Configuration
+# --------------------------------
+base_class: "BaseOperator"
+template_fields: ["api_endpoint", "request_data", "headers", "query_params"]
+template_ext: [".json", ".yaml"]
+
+# Examples
+# --------
+examples:
+  - description: "Basic GET request"
+    code: |
+      from airflow import DAG
+      from datetime import datetime
+      from custom_api_operator import CustomApiOperator
+
+      with DAG(
+          dag_id='api_example_dag',
+          start_date=datetime(2024, 1, 1),
+          schedule_interval='@daily',
+          catchup=False
+      ) as dag:
+
+          fetch_data = CustomApiOperator(
+              task_id='fetch_api_data',
+              api_endpoint='https://api.example.com/v1/data',
+              http_method='GET',
+              headers={'Accept': 'application/json'}
+          )
+
+  - description: "POST request with authentication"
+    code: |
+      create_resource = CustomApiOperator(
+          task_id='create_resource',
+          api_endpoint='https://api.example.com/v1/resources',
+          http_method='POST',
+          request_data={
+              'name': 'New Resource',
+              'type': 'example'
+          },
+          http_conn_id='api_auth_conn',
+          retry_limit=5
+      )
+
+  - description: "Using Jinja templating"
+    code: |
+      dynamic_request = CustomApiOperator(
+          task_id='dynamic_api_call',
+          api_endpoint='https://api.example.com/v1/data/{{ ds }}',
+          query_params={
+              'date': '{{ ds }}',
+              'user_id': '{{ dag_run.conf.get("user_id") }}'
+          },
+          headers={
+              'Authorization': 'Bearer {{ var.value.api_token }}'
+          }
+      )
+
+# Implementation Hints
+# --------------------
+implementation_hints:
+  - "Use self.log for logging instead of print()"
+  - "Retrieve HTTP connection using HttpHook from airflow.providers.http"
+  - "Implement exponential backoff for retries (delay * (2 ** attempt))"
+  - "Parse JSON responses and handle non-JSON responses gracefully"
+  - "Raise AirflowException for failed requests with clear error messages"
+  - "Use context parameter to access task_instance, execution_date, etc."
+  - "Push response to XCom using return statement"
+  - "Validate required parameters in __init__()"
+  - "Handle connection pooling for better performance"
+  - "Log request details (URL, method, headers) before sending"
+  - "Log response details (status code, response size) after receiving"
+
+# Prerequisites
+# --------------
+prerequisites:
+  services:
+    - name: "External API"
+      type: "http"
+      description: "External REST API service"
+      endpoint_env: "EXTERNAL_API_URL"
+      default_endpoint: "https://api.example.com"
+      required: true
+
+  environment_variables:
+    - name: "API_KEY"
+      description: "API key for authentication (if not using Airflow connection)"
+      required: false
+      default: ""
+      sensitive: true
+      example: "your-api-key-here"
+
+  airflow_connections:
+    - name: "http_default"
+      conn_type: "http"
+      description: "HTTP connection with authentication credentials"
+      required: true
+      example: |
+        Conn ID: api_auth_conn
+        Conn Type: HTTP
+        Host: api.example.com
+        Schema: https
+        Port: 443
+        Extra: {"Authorization": "Bearer your-token"}
+
+  configuration:
+    - name: "max_retries"
+      description: "Global maximum retries for all API calls"
+      type: "int"
+      default: 3
+      validation: "Must be between 0 and 10"
+
+    - name: "default_timeout"
+      description: "Default timeout in seconds"
+      type: "int"
+      default: 30
+      validation: "Must be positive integer"
+
+# Metadata
+# --------
+author: "Data Engineering Team"
+version: "1.0.0"
+license: "Apache 2.0"
+documentation_url: "https://docs.example.com/operators/custom-api"

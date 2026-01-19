@@ -1,0 +1,70 @@
+# Sample Airflow Operator Specification
+
+name: CustomHttpOperator
+display_name: "Custom HTTP API Caller"
+description: "Make HTTP requests to external APIs with custom headers and authentication, parse JSON responses, and handle retries"
+category: http
+component_type: operator
+platforms:
+  - airflow
+
+requirements:
+  - "Support GET, POST, PUT, DELETE HTTP methods"
+  - "Accept custom headers for authentication"
+  - "Parse JSON responses automatically"
+  - "Handle connection timeouts gracefully"
+  - "Retry failed requests with exponential backoff"
+  - "Log request and response details"
+
+inputs:
+  - name: endpoint
+    type: str
+    description: "HTTP endpoint URL to call"
+    required: true
+    template_field: true
+
+  - name: method
+    type: str
+    description: "HTTP method (GET, POST, PUT, DELETE)"
+    required: false
+    default: "GET"
+
+  - name: headers
+    type: Dict[str, str]
+    description: "Custom HTTP headers"
+    required: false
+    default: "{}"
+
+  - name: data
+    type: Optional[Dict[str, Any]]
+    description: "Request body data (for POST/PUT)"
+    required: false
+
+  - name: timeout
+    type: int
+    description: "Request timeout in seconds"
+    required: false
+    default: "30"
+
+config_params:
+  - name: http_conn_id
+    type: str
+    description: "Airflow connection ID for HTTP connection"
+    default: "http_default"
+
+  - name: retry_limit
+    type: int
+    description: "Maximum number of retry attempts"
+    default: "3"
+
+dependencies:
+  - "apache-airflow-providers-http>=4.0.0"
+  - "requests"
+
+base_class: "BaseOperator"
+template_fields: ["endpoint", "method", "headers", "data"]
+ui_color: "#f4a460"
+ui_fgcolor: "#000"
+
+author: "Airflow Component Factory"
+version: "1.0.0"

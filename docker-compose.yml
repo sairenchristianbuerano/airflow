@@ -1,0 +1,37 @@
+# Docker Compose for Airflow Component Generator Service
+
+services:
+  # Component Generator Service
+  component-generator:
+    build:
+      context: ./component-generator
+      dockerfile: Dockerfile
+    container_name: airflow-component-generator
+    ports:
+      - "8095:8095"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - PORT=8095
+      - CORS_ORIGINS=["http://localhost:8095", "http://localhost:3000"]
+    volumes:
+      - generator_data:/app/data
+      # Mount generated_operators to local filesystem for testing and reference
+      - ./component-generator/generated_operators:/app/data/generated_operators
+    networks:
+      - airflow_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8095/api/airflow/component-generator/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  airflow_network:
+    driver: bridge
+
+volumes:
+  generator_data:
+    driver: local
