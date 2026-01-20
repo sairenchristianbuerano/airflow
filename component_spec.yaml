@@ -1,0 +1,234 @@
+# NVIDIA NeMo Question Answering Operator Specification
+# =========================================================
+# Simplified version focusing on core QA functionality
+# Based on: https://docs.nvidia.com/nemo-framework/user-guide/24.09/nemotoolkit/nlp/question_answering.html
+
+name: "NeMoQuestionAnsweringOperator"
+display_name: "NVIDIA NeMo Question Answering Operator"
+description: "Execute NVIDIA NeMo Question Answering for training or inference on SQuAD-format datasets with BERT, T5, or GPT models"
+category: "machine_learning"
+component_type: "operator"
+
+# Inputs
+inputs:
+  # Core Configuration
+  - name: "mode"
+    type: "str"
+    display_name: "Execution Mode"
+    description: "Operation mode: 'train', 'inference', or 'evaluate'"
+    required: true
+    default: "inference"
+    template_field: false
+
+  - name: "model_type"
+    type: "str"
+    display_name: "Model Type"
+    description: "QA model: 'extractive' (BERT), 'generative_s2s' (T5/BART), or 'generative_gpt' (GPT-2)"
+    required: true
+    default: "extractive"
+    template_field: false
+
+  - name: "pretrained_model_name"
+    type: "str"
+    display_name: "Pretrained Model"
+    description: "HuggingFace model name (e.g., 'bert-base-uncased', 't5-small', 'gpt2')"
+    required: true
+    default: "bert-base-uncased"
+    template_field: true
+
+  # Dataset Paths
+  - name: "dataset_file"
+    type: "str"
+    display_name: "Dataset File"
+    description: "Path to SQuAD-format JSON file (for training/evaluation)"
+    required: false
+    default: ""
+    template_field: true
+
+  - name: "questions_file"
+    type: "str"
+    display_name: "Questions File"
+    description: "Path to questions text file (for inference)"
+    required: false
+    default: ""
+    template_field: true
+
+  - name: "context_file"
+    type: "str"
+    display_name: "Context File"
+    description: "Path to context passages file (for inference)"
+    required: false
+    default: ""
+    template_field: true
+
+  # Training Parameters
+  - name: "num_epochs"
+    type: "int"
+    display_name: "Training Epochs"
+    description: "Number of training epochs"
+    required: false
+    default: 3
+    template_field: false
+
+  - name: "batch_size"
+    type: "int"
+    display_name: "Batch Size"
+    description: "Training/inference batch size"
+    required: false
+    default: 16
+    template_field: false
+
+  - name: "learning_rate"
+    type: "float"
+    display_name: "Learning Rate"
+    description: "Learning rate for training"
+    required: false
+    default: 0.00003
+    template_field: false
+
+  # Hardware
+  - name: "num_gpus"
+    type: "int"
+    display_name: "Number of GPUs"
+    description: "GPU count for training/inference"
+    required: false
+    default: 1
+    template_field: false
+
+  # Output
+  - name: "output_dir"
+    type: "str"
+    display_name: "Output Directory"
+    description: "Directory for models, checkpoints, and predictions"
+    required: true
+    default: "/tmp/nemo_qa_output"
+    template_field: true
+
+# Runtime Parameters (UI configuration)
+runtime_params:
+  - name: "execution_mode"
+    type: "string"
+    description: "Choose execution mode"
+    enum: ["train", "inference", "evaluate"]
+    default: "inference"
+
+  - name: "qa_model_type"
+    type: "string"
+    description: "Question answering model architecture"
+    enum: ["extractive", "generative_s2s", "generative_gpt"]
+    default: "extractive"
+
+  - name: "pretrained_model"
+    type: "string"
+    description: "HuggingFace model name"
+    default: "bert-base-uncased"
+
+  - name: "dataset_path"
+    type: "string"
+    description: "Path to SQuAD-format dataset"
+    default: "/data/squad_v1.json"
+
+  - name: "gpu_count"
+    type: "number"
+    description: "Number of GPUs to use"
+    default: 1
+
+  - name: "output_directory"
+    type: "string"
+    description: "Output directory for models and predictions"
+    default: "/tmp/nemo_qa_output"
+
+# Outputs
+outputs:
+  - name: "predictions"
+    type: "Dict[str, Any]"
+    description: "Question answering predictions with answers and confidence scores"
+    method: "execute"
+
+  - name: "metrics"
+    type: "Dict[str, float]"
+    description: "Evaluation metrics (Exact Match, F1 score)"
+    method: "execute"
+
+# Requirements
+requirements:
+  - "Initialize NVIDIA NeMo Question Answering model (BERT for extractive, T5/GPT for generative QA)"
+  - "Load and preprocess SQuAD-format datasets with tokenization"
+  - "Support training mode (fine-tune on custom datasets) and inference mode (answer questions)"
+  - "Handle extractive QA (find answer spans) and generative QA (generate free-form answers)"
+  - "Configure GPU acceleration with configurable precision (FP32, FP16)"
+  - "Implement training with Lightning Trainer and optimizer"
+  - "Generate predictions with confidence scores"
+  - "Calculate evaluation metrics: Exact Match and F1 score"
+  - "Save model checkpoints and prediction results to output directory"
+  - "Push model path and metrics to XCom for downstream tasks"
+  - "Log training progress, loss, and validation metrics"
+
+# Dependencies
+dependencies:
+  - "apache-airflow>=2.0.0"
+  - "nemo-toolkit[nlp]>=1.20.0"
+  - "torch>=2.0.0"
+  - "transformers>=4.30.0"
+  - "pytorch-lightning>=2.0.0"
+
+# Airflow Configuration
+base_class: "BaseOperator"
+template_fields:
+  - "pretrained_model_name"
+  - "dataset_file"
+  - "questions_file"
+  - "context_file"
+  - "output_dir"
+template_ext:
+  - ".json"
+  - ".txt"
+
+# Examples
+examples:
+  - description: "Inference with BERT model"
+    code: |
+      qa_inference = NeMoQuestionAnsweringOperator(
+          task_id='answer_questions',
+          mode='inference',
+          model_type='extractive',
+          pretrained_model_name='bert-base-uncased',
+          questions_file='/data/questions.txt',
+          context_file='/data/context.txt',
+          output_dir='/output/predictions',
+          num_gpus=1
+      )
+
+  - description: "Train on SQuAD dataset"
+    code: |
+      train_qa = NeMoQuestionAnsweringOperator(
+          task_id='train_qa_model',
+          mode='train',
+          model_type='extractive',
+          pretrained_model_name='roberta-base',
+          dataset_file='/data/squad_train.json',
+          num_epochs=5,
+          batch_size=32,
+          learning_rate=3e-5,
+          output_dir='/models/qa_roberta',
+          num_gpus=2
+      )
+
+# Implementation Hints
+implementation_hints:
+  - "Import nemo.collections.nlp.models.question_answering (BERTQAModel, S2SQAModel, GPTQAModel)"
+  - "Initialize model from pretrained checkpoint or HuggingFace model name"
+  - "Use pytorch_lightning.Trainer for training with GPU support"
+  - "Implement execute() method to handle train/inference/evaluate modes"
+  - "For training: set up AdamW optimizer and WarmupHoldDecay scheduler"
+  - "For inference: load checkpoint, run model.inference(), return predictions dict"
+  - "For evaluation: compute Exact Match and F1 scores using NeMo utilities"
+  - "Handle file I/O errors and GPU availability checks"
+  - "Log progress with self.log.info() for training epochs and metrics"
+  - "Push results to XCom: predictions, metrics, and model_path"
+
+# Metadata
+author: "NVIDIA NeMo Team + Data Engineering"
+version: "1.0.0"
+license: "Apache 2.0"
+documentation_url: "https://docs.nvidia.com/nemo-framework/user-guide/24.09/nemotoolkit/nlp/question_answering.html"

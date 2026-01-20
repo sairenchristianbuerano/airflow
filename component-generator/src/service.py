@@ -182,11 +182,12 @@ async def generate_sample_component_endpoint():
         raise HTTPException(status_code=503, detail="Generator not initialized")
 
     try:
-        # Load sample specification from file
+        # Load sample specification from file (NeMo Question Answering component)
         sample_spec_path = os.path.join(
             os.path.dirname(__file__),
             "..",
-            "sample_operator_spec.yaml"
+            "..",
+            "component_spec.yaml"
         )
 
         if not os.path.exists(sample_spec_path):
