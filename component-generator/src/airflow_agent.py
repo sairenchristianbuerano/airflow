@@ -453,10 +453,53 @@ class AirflowComponentGenerator(BaseCodeGenerator):
 
         # Add input parameters
         if spec.inputs:
-            prompt += "## Input Parameters\n\n"
+            # CRITICAL FIX: Sort inputs to ensure valid Python parameter ordering
+            # Python requires: required (no default) -> required (with default) -> optional (with default)
+            required_no_default = []
+            required_with_default = []
+            optional_params = []
+
             for inp in spec.inputs:
+                is_required = inp.get('required', False)
+                has_default = 'default' in inp
+
+                if is_required and not has_default:
+                    # Truly required parameter (no default value)
+                    required_no_default.append(inp)
+                elif is_required and has_default:
+                    # Contradictory: required=true but has default value
+                    # This is logically optional but marked as required
+                    self.logger.warning(
+                        "Parameter has required=true but also has default value - treating as required with default",
+                        param_name=inp.get('name'),
+                        default_value=inp.get('default')
+                    )
+                    required_with_default.append(inp)
+                else:
+                    # Optional parameter (required=false)
+                    optional_params.append(inp)
+
+            # Reorder: required (no default) -> required (with default) -> optional
+            sorted_inputs = required_no_default + required_with_default + optional_params
+
+            prompt += "## Input Parameters\n\n"
+            prompt += "**IMPORTANT**: Parameters are ordered to ensure valid Python syntax:\n"
+            prompt += "1. Required parameters without defaults first\n"
+            prompt += "2. Required parameters with defaults second\n"
+            prompt += "3. Optional parameters with defaults last\n\n"
+
+            for inp in sorted_inputs:
                 required = "Required" if inp.get('required', False) else "Optional"
-                prompt += f"- **{inp['name']}** ({inp.get('type', 'str')}): {required}\n"
+                has_default = 'default' in inp
+                prompt += f"- **{inp['name']}** ({inp.get('type', 'str')}): {required}"
+                if has_default:
+                    default_val = inp.get('default')
+                    # Format default value for display
+                    if isinstance(default_val, str):
+                        prompt += f" (default: '{default_val}')"
+                    else:
+                        prompt += f" (default: {default_val})"
+                prompt += "\n"
                 if 'description' in inp:
                     prompt += f"  {inp['description']}\n"
             prompt += "\n"
