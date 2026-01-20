@@ -83,29 +83,34 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         complexity_score = 0
 
         # Factor 1: Number of inputs (each input adds complexity)
-        inputs = spec.inputs if spec.inputs else []
+        inputs = spec.inputs if spec.inputs is not None else []
         complexity_score += len(inputs)
 
         # Factor 2: Runtime parameters (UI forms add complexity)
-        runtime_params = spec.runtime_params if spec.runtime_params else []
+        runtime_params = spec.runtime_params if spec.runtime_params is not None else []
         complexity_score += len(runtime_params) * 1.5  # Runtime params more complex
 
         # Factor 3: Number of dependencies
-        dependencies = spec.dependencies if spec.dependencies else []
+        dependencies = spec.dependencies if spec.dependencies is not None else []
         complexity_score += len(dependencies) * 2  # External deps significantly increase complexity
 
         # Factor 4: Custom requirements or logic
-        requirements = spec.requirements if spec.requirements else []
+        requirements = spec.requirements if spec.requirements is not None else []
         complexity_score += len(requirements)
 
         # Factor 5: Component type complexity
-        if spec.component_type == "hook":
+        component_type = getattr(spec, 'component_type', 'operator')
+        if component_type == "hook":
             complexity_score += 2  # Hooks are more complex (connection handling)
-        elif spec.component_type == "sensor":
+        elif component_type == "sensor":
             complexity_score += 1  # Sensors moderately complex (poke logic)
 
         # Factor 6: Template fields (Jinja templating adds complexity)
-        template_field_count = sum(1 for inp in inputs if inp.get('template_field', False))
+        template_field_count = 0
+        try:
+            template_field_count = sum(1 for inp in inputs if isinstance(inp, dict) and inp.get('template_field', False))
+        except Exception as e:
+            self.logger.warning("Failed to count template fields", error=str(e))
         complexity_score += template_field_count
 
         # Decision thresholds

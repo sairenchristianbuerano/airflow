@@ -18,7 +18,19 @@ logger = structlog.get_logger()
 class LearningDatabase:
     """SQLite database for tracking generation metrics and learning patterns"""
 
-    def __init__(self, db_path: str = "/app/data/learning.db"):
+    def __init__(self, db_path: str = None):
+        # Default to platform-agnostic path
+        if db_path is None:
+            # Check if running in Docker (has /app/data/) or locally
+            import os
+            from pathlib import Path
+            if os.path.exists("/app/data"):
+                db_path = "/app/data/learning.db"
+            else:
+                # Use relative path for local development
+                base_dir = Path(__file__).parent.parent
+                db_path = str(base_dir / "data" / "learning.db")
+
         self.db_path = db_path
         self.logger = logger.bind(component="learning_database")
         self._init_database()

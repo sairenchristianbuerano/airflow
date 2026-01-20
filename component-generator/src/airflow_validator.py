@@ -451,77 +451,6 @@ class AirflowComponentValidator:
 
         return errors, warnings
 
-
-class FeasibilityChecker:
-    """Check if a component spec is feasible to generate"""
-
-    def __init__(self):
-        self.logger = logger.bind(component="feasibility_checker")
-
-    def assess_feasibility(
-        self,
-        spec_dict: dict,
-        similar_patterns_count: int = 0
-    ) -> dict:
-        """
-        Assess if component generation is feasible
-
-        Args:
-            spec_dict: Component specification dictionary
-            similar_patterns_count: Number of similar patterns found in RAG
-
-        Returns:
-            Dictionary with feasibility assessment
-        """
-        issues = []
-        suggestions = []
-        missing_info = []
-
-        # Check required fields
-        if not spec_dict.get('name'):
-            issues.append("Missing required field: name")
-        if not spec_dict.get('description'):
-            missing_info.append("description")
-        if not spec_dict.get('category'):
-            missing_info.append("category")
-
-        # Check complexity
-        complexity = "simple"
-        if len(spec_dict.get('requirements', [])) > 5:
-            complexity = "medium"
-        if len(spec_dict.get('requirements', [])) > 10:
-            complexity = "complex"
-
-        # Check for unsupported dependencies
-        dependencies = spec_dict.get('dependencies', [])
-        for dep in dependencies:
-            if 'airflow' not in dep.lower() and not dep.startswith('apache-airflow'):
-                suggestions.append(
-                    f"External dependency '{dep}' may require manual installation"
-                )
-
-        # Determine confidence
-        confidence = "high"
-        if issues:
-            confidence = "blocked"
-        elif missing_info:
-            confidence = "medium"
-        elif similar_patterns_count == 0:
-            confidence = "low"
-            suggestions.append("No similar patterns found. Generation may be less accurate.")
-
-        feasible = len(issues) == 0
-
-        return {
-            "feasible": feasible,
-            "confidence": confidence,
-            "complexity": complexity,
-            "issues": issues,
-            "suggestions": suggestions,
-            "missing_info": missing_info,
-            "similar_patterns_found": similar_patterns_count
-        }
-
     def _run_static_analysis(self, code: str) -> List[str]:
         """
         Run optional static analysis tools (mypy, ruff) on generated code.
@@ -709,3 +638,75 @@ class FeasibilityChecker:
             self.logger.debug("Ruff validation skipped", error=str(e))
 
         return warnings
+
+
+class FeasibilityChecker:
+    """Check if a component spec is feasible to generate"""
+
+    def __init__(self):
+        self.logger = logger.bind(component="feasibility_checker")
+
+    def assess_feasibility(
+        self,
+        spec_dict: dict,
+        similar_patterns_count: int = 0
+    ) -> dict:
+        """
+        Assess if component generation is feasible
+
+        Args:
+            spec_dict: Component specification dictionary
+            similar_patterns_count: Number of similar patterns found in RAG
+
+        Returns:
+            Dictionary with feasibility assessment
+        """
+        issues = []
+        suggestions = []
+        missing_info = []
+
+        # Check required fields
+        if not spec_dict.get('name'):
+            issues.append("Missing required field: name")
+        if not spec_dict.get('description'):
+            missing_info.append("description")
+        if not spec_dict.get('category'):
+            missing_info.append("category")
+
+        # Check complexity
+        complexity = "simple"
+        if len(spec_dict.get('requirements', [])) > 5:
+            complexity = "medium"
+        if len(spec_dict.get('requirements', [])) > 10:
+            complexity = "complex"
+
+        # Check for unsupported dependencies
+        dependencies = spec_dict.get('dependencies', [])
+        for dep in dependencies:
+            if 'airflow' not in dep.lower() and not dep.startswith('apache-airflow'):
+                suggestions.append(
+                    f"External dependency '{dep}' may require manual installation"
+                )
+
+        # Determine confidence
+        confidence = "high"
+        if issues:
+            confidence = "blocked"
+        elif missing_info:
+            confidence = "medium"
+        elif similar_patterns_count == 0:
+            confidence = "low"
+            suggestions.append("No similar patterns found. Generation may be less accurate.")
+
+        feasible = len(issues) == 0
+
+        return {
+            "feasible": feasible,
+            "confidence": confidence,
+            "complexity": complexity,
+            "issues": issues,
+            "suggestions": suggestions,
+            "missing_info": missing_info,
+            "similar_patterns_found": similar_patterns_count
+        }
+

@@ -9,6 +9,7 @@ import os
 import yaml
 from typing import Optional
 from contextlib import asynccontextmanager
+from pathlib import Path
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,19 @@ from src.airflow_agent import AirflowComponentGenerator
 from src.airflow_validator import FeasibilityChecker
 from src.base_classes import OperatorSpec, SensorSpec, HookSpec
 from src import __version__
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Look for .env file in parent directory (repo root)
+    env_path = Path(__file__).parent.parent.parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path)
+        logger_temp = structlog.get_logger()
+        logger_temp.info("Loaded environment variables from .env file", path=str(env_path))
+except ImportError:
+    # python-dotenv not installed, skip
+    pass
 
 logger = structlog.get_logger()
 

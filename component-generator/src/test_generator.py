@@ -808,7 +808,7 @@ with DAG(
             return "        # No parameters required"
 
         # Create a set of runtime param names for quick lookup
-        runtime_param_names = {p.get('name') for p in runtime_params}
+        runtime_param_names = {p.get('name') for p in (runtime_params or [])}
 
         param_lines = []
         for inp in inputs:
