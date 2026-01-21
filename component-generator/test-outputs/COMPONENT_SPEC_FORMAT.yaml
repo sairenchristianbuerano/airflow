@@ -1,0 +1,209 @@
+# Apache Airflow Custom Component Specification Format
+# =====================================================
+#
+# This YAML format defines the specification for generating custom Apache Airflow components.
+# Follows the team's standardized component spec format used across all platforms.
+# Platform: Apache Airflow 2.0+
+
+# Basic Component Information
+name: "MyCustomOperator"  # PascalCase, will be used as Python class name
+display_name: "My Custom Operator"  # Title Case, shown in documentation
+description: "A clear description of what this component does"
+category: "custom"  # Category: http, database, cloud, messaging, custom, etc.
+component_type: "operator"  # Type: operator, sensor, or hook
+platforms:
+  - airflow  # Target platform(s)
+
+# Icon/UI Configuration (Airflow-specific)
+# -----------------------------------------
+icon: "box"  # Icon reference (for future UI integration)
+ui_color: "#f0ede4"  # Hex color for Airflow UI
+ui_fgcolor: "#000"  # Foreground color (optional)
+
+# Inputs
+# ------
+# Define the input parameters for your component
+inputs:
+  - name: "input_value"  # snake_case parameter name
+    type: "str"  # Type: str, int, float, bool, Dict, List, Optional[...], etc.
+    display_name: "Input Value"
+    description: "Description of what this input does"
+    required: true
+    default: ""  # Default value (optional)
+    template_field: true  # Whether this field supports Jinja templating
+
+  - name: "threshold"
+    type: "float"
+    display_name: "Threshold Value"
+    description: "Minimum threshold for processing"
+    required: false
+    default: 0.5
+    template_field: false
+
+  - name: "options"
+    type: "Dict[str, Any]"
+    display_name: "Processing Options"
+    description: "Additional options for processing"
+    required: false
+    default: "{}"
+    template_field: false
+
+# Runtime Parameters (DAG-level user input via UI)
+# --------------------------------------------------
+# Define parameters that users can input via Airflow UI when triggering the DAG
+# These create form fields in the "Trigger DAG" dialog
+runtime_params:
+  - name: "city"  # Parameter name (must match an input field name)
+    type: "string"  # Type: string, number, boolean, array, object
+    description: "City name to fetch weather for"
+    default: "Tokyo"  # Default value shown in form
+    enum: []  # Optional: ["Tokyo", "London", "Paris"] for dropdown
+    min_value: null  # For number types
+    max_value: null  # For number types
+    min_length: null  # For string types
+    max_length: null  # For string types
+
+  - name: "units"
+    type: "string"
+    description: "Temperature units"
+    default: "metric"
+    enum: ["metric", "imperial"]  # Creates dropdown in UI
+
+# Configuration Parameters
+# -------------------------
+# Parameters passed to __init__ but not shown as task parameters
+config_params:
+  - name: "conn_id"
+    type: "str"
+    description: "Airflow connection ID"
+    default: "default_conn"
+
+  - name: "retry_limit"
+    type: "int"
+    description: "Maximum number of retry attempts"
+    default: "3"
+
+# Outputs (for documentation purposes)
+# -------------------------------------
+# Airflow operators typically return values via XCom
+outputs:
+  - name: "result"
+    type: "Any"  # Return type
+    description: "Processing result pushed to XCom"
+    method: "execute"  # Method that produces this output
+
+# Requirements
+# ------------
+# Natural language description of what the component should do
+requirements:
+  - "Accept input value and process it"
+  - "Apply threshold filtering if configured"
+  - "Transform data according to rules"
+  - "Push result to XCom for downstream tasks"
+  - "Handle connection errors gracefully"
+  - "Log processing steps for debugging"
+
+# Dependencies
+# ------------
+# Python packages and Airflow providers required
+dependencies:
+  - "apache-airflow>=2.0.0"
+  - "pandas"
+  - "requests"
+
+# Airflow-Specific Configuration
+# --------------------------------
+base_class: "BaseOperator"  # BaseOperator, BaseSensor, or BaseHook
+template_fields: ["input_value", "threshold"]  # Fields supporting Jinja templating
+template_ext: []  # File extensions for template fields (optional)
+
+# For Sensors only:
+# poke_interval: 60  # Seconds between poke attempts
+# timeout: 3600  # Maximum wait time in seconds
+# mode: "poke"  # "poke" or "reschedule"
+
+# For Hooks only:
+# conn_name_attr: "conn_id"  # Connection attribute name
+# conn_type: "http"  # Connection type
+# hook_name: "Custom Hook"  # Hook display name
+
+# Optional: Examples
+# ------------------
+# Provide usage examples
+examples:
+  - description: "Basic usage in DAG"
+    code: |
+      from airflow import DAG
+      from datetime import datetime
+      from my_custom_operator import MyCustomOperator
+
+      with DAG(
+          dag_id='example_dag',
+          start_date=datetime(2024, 1, 1),
+          schedule_interval='@daily'
+      ) as dag:
+          task = MyCustomOperator(
+              task_id='process_data',
+              input_value='sample_data',
+              threshold=0.7
+          )
+
+  - description: "With Jinja templating"
+    code: |
+      task = MyCustomOperator(
+          task_id='process_dynamic',
+          input_value='{{ dag_run.conf["input"] }}',
+          threshold={{ var.value.threshold }}
+      )
+
+# Optional: Implementation Hints
+# -------------------------------
+# Guide the LLM code generation
+implementation_hints:
+  - "Use self.log for logging instead of print()"
+  - "Access Airflow connections via BaseHook.get_connection()"
+  - "Push return values to XCom via return statement in execute()"
+  - "Implement graceful error handling with AirflowException"
+  - "Use context parameter for accessing task instance, execution date, etc."
+  - "Validate required parameters in __init__()"
+
+# Optional: Prerequisites
+# ------------------------
+# Define runtime prerequisites and environment requirements
+prerequisites:
+  services:
+    - name: "External API"
+      type: "http"
+      description: "External service API endpoint"
+      endpoint_env: "EXTERNAL_API_URL"
+      default_endpoint: "https://api.example.com"
+      required: true
+
+  environment_variables:
+    - name: "API_KEY"
+      description: "API key for authentication"
+      required: false
+      default: ""
+      sensitive: true
+      example: "your-api-key-here"
+
+  airflow_connections:
+    - name: "custom_conn"
+      conn_type: "http"
+      description: "Connection to external service"
+      required: true
+      example: "Conn ID: custom_conn, Type: HTTP, Host: api.example.com"
+
+  configuration:
+    - name: "max_retries"
+      description: "Maximum number of retries for failed requests"
+      type: "int"
+      default: 3
+      validation: "Must be between 1 and 10"
+
+# Metadata
+# --------
+author: "Your Team Name"
+version: "1.0.0"
+license: "Apache 2.0"
+documentation_url: ""  # URL to additional documentation (optional)
