@@ -16,7 +16,7 @@ inputs:
     type: "str"
     display_name: "Execution Mode"
     description: "Operation mode: 'train', 'inference', or 'evaluate'"
-    required: true
+    required: false
     default: "inference"
     template_field: false
 
@@ -24,7 +24,7 @@ inputs:
     type: "str"
     display_name: "Model Type"
     description: "QA model: 'extractive' (BERT), 'generative_s2s' (T5/BART), or 'generative_gpt' (GPT-2)"
-    required: true
+    required: false
     default: "extractive"
     template_field: false
 
@@ -32,7 +32,7 @@ inputs:
     type: "str"
     display_name: "Pretrained Model"
     description: "HuggingFace model name (e.g., 'bert-base-uncased', 't5-small', 'gpt2')"
-    required: true
+    required: false
     default: "bert-base-uncased"
     template_field: true
 
@@ -100,7 +100,7 @@ inputs:
     type: "str"
     display_name: "Output Directory"
     description: "Directory for models, checkpoints, and predictions"
-    required: true
+    required: false
     default: "/tmp/nemo_qa_output"
     template_field: true
 

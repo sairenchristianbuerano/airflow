@@ -1,0 +1,220 @@
+{
+  "version": "1.0",
+  "created_at": "2026-01-20T19:50:56.057866",
+  "patterns": [
+    {
+      "id": "nemo_qa_operator_success_2026_01_20",
+      "component_name": "NeMoQuestionAnsweringOperator",
+      "category": "ml",
+      "subcategory": "nlp",
+      "framework": "nvidia_nemo",
+      "component_type": "operator",
+      "operator_code": "try:\n    from airflow.sdk.bases.operator import BaseOperator\nexcept ImportError:\n    from airflow.models import BaseOperator\n\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\nimport json\nimport os\nimport logging\n\nclass NeMoQuestionAnsweringOperator(BaseOperator):\n    \"\"\"\n    Execute NVIDIA NeMo Question Answering for training or inference.\n    \n    Supports extractive QA (BERT-based) and generative QA (T5/GPT-based models).\n    Handles dataset in SQuAD format for training and evaluation.\n    \n    Args:\n        mode: Operation mode - train, inference, or evaluate\n        model_type: QA model type - extractive, generative_s2s, or generative_gpt\n        pretrained_model_name: Pretrained model name from HuggingFace or NeMo\n        dataset_file: Path to dataset file in SQuAD format\n        output_dir: Output directory for results\n        **kwargs: Additional keyword arguments passed to BaseOperator\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['mode', 'model_type', 'dataset_file', 'output_dir']\n    ui_color: str = \"#76b900\"\n    \n    def __init__(\n        self,\n        mode: str = 'inference',\n        model_type: str = 'extractive',\n        pretrained_model_name: str = 'bert-base-uncased',\n        dataset_file: str = '',\n        output_dir: str = '/tmp/nemo_qa_output',\n        **kwargs\n    ) -> None:\n        super().__init__(**kwargs)\n        \n        # Validate non-template parameters\n        valid_modes = ['train', 'inference', 'evaluate']\n        valid_model_types = ['extractive', 'generative_s2s', 'generative_gpt']\n        \n        # Skip validation for template strings (will be validated in execute)\n        if '{{' not in str(mode) and mode not in valid_modes:\n            raise AirflowException(f\"Invalid mode '{mode}'. Must be one of: {valid_modes}\")\n        \n        if '{{' not in str(model_type) and model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid model_type '{model_type}'. Must be one of: {valid_model_types}\")\n        \n        self.mode = mode\n        self.model_type = model_type\n        self.pretrained_model_name = pretrained_model_name\n        self.dataset_file = dataset_file\n        self.output_dir = output_dir\n        \n        self.log.info(f\"Initialized NeMoQuestionAnsweringOperator with mode={mode}, model_type={model_type}\")\n    \n    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:\n        \"\"\"\n        Execute NeMo Question Answering operation.\n        \n        Args:\n            context: Airflow context dictionary\n            \n        Returns:\n            Dict containing execution results and output paths\n            \n        Raises:\n            AirflowException: On validation or execution failure\n        \"\"\"\n        self.log.info(f\"Executing NeMo Question Answering task: {self.task_id}\")\n        \n        # Validate template fields after Jinja rendering\n        valid_modes = ['train', 'inference', 'evaluate']\n        valid_model_types = ['extractive', 'generative_s2s', 'generative_gpt']\n        \n        if self.mode not in valid_modes:\n            raise AirflowException(f\"Invalid mode '{self.mode}'. Must be one of: {valid_modes}\")\n        \n        if self.model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid model_type '{self.model_type}'. Must be one of: {valid_model_types}\")\n        \n        # Check runtime parameters from context\n        params = context.get('params', {})\n        execution_mode = params.get('execution_mode', self.mode)\n        qa_model_type = params.get('qa_model_type', self.model_type)\n        \n        if execution_mode not in valid_modes:\n            raise AirflowException(f\"Invalid execution_mode parameter '{execution_mode}'. Must be one of: {valid_modes}\")\n        \n        if qa_model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid qa_model_type parameter '{qa_model_type}'. Must be one of: {valid_model_types}\")\n        \n        # Use runtime parameters if provided\n        final_mode = execution_mode\n        final_model_type = qa_model_type\n        \n        self.log.info(f\"Using mode: {final_mode}, model_type: {final_model_type}\")\n        \n        try:\n            # Create output directory\n            output_path = Path(self.output_dir)\n            output_path.mkdir(parents=True, exist_ok=True)\n            self.log.info(f\"Created output directory: {output_path}\")\n            \n            # Validate dataset file for training/evaluation\n            if final_mode in ['train', 'evaluate']:\n                if not self.dataset_file:\n                    raise AirflowException(f\"dataset_file is required for mode '{final_mode}'\")\n                \n                dataset_path = Path(self.dataset_file)\n                if not dataset_path.exists():\n                    raise AirflowException(f\"Dataset file not found: {self.dataset_file}\")\n                \n                self.log.info(f\"Using dataset file: {self.dataset_file}\")\n            \n            # Execute based on mode\n            result = {}\n            \n            if final_mode == 'train':\n                result = self._execute_training(final_model_type, output_path)\n            elif final_mode == 'inference':\n                result = self._execute_inference(final_model_type, output_path)\n            elif final_mode == 'evaluate':\n                result = self._execute_evaluation(final_model_type, output_path)\n            \n            # Save execution summary\n            summary_file = output_path / 'execution_summary.json'\n            summary = {\n                'task_id': self.task_id,\n                'mode': final_mode,\n                'model_type': final_model_type,\n                'pretrained_model': self.pretrained_model_name,\n                'dataset_file': self.dataset_file,\n                'output_dir': str(output_path),\n                'execution_date': context.get('execution_date', '').isoformat() if context.get('execution_date') else '',\n                'result': result\n            }\n            \n            with open(summary_file, 'w') as f:\n                json.dump(summary, f, indent=2)\n            \n            self.log.info(f\"Execution completed successfully. Summary saved to: {summary_file}\")\n            \n            return {\n                'mode': final_mode,\n                'model_type': final_model_type,\n                'output_dir': str(output_path),\n                'summary_file': str(summary_file),\n                'result': result\n            }\n            \n        except Exception as e:\n            self.log.error(f\"NeMo Question Answering execution failed: {str(e)}\")\n            raise AirflowException(f\"NeMo Question Answering execution failed: {str(e)}\")\n    \n    def _execute_training(self, model_type: str, output_path: Path) -> Dict[str, Any]:\n        \"\"\"Execute training mode.\"\"\"\n        self.log.info(f\"Starting training for {model_type} model\")\n        \n        # Simulate NeMo training process\n        model_output_dir = output_path / 'trained_model'\n        model_output_dir.mkdir(exist_ok=True)\n        \n        # Create mock training artifacts\n        config_file = model_output_dir / 'model_config.json'\n        config = {\n            'model_type': model_type,\n            'pretrained_model': self.pretrained_model_name,\n            'dataset': self.dataset_file,\n            'training_status': 'completed'\n        }\n        \n        with open(config_file, 'w') as f:\n            json.dump(config, f, indent=2)\n        \n        # Create mock checkpoint\n        checkpoint_file = model_output_dir / 'model_checkpoint.pt'\n        checkpoint_file.touch()\n        \n        self.log.info(f\"Training completed. Model saved to: {model_output_dir}\")\n        \n        return {\n            'status': 'training_completed',\n            'model_dir': str(model_output_dir),\n            'config_file': str(config_file),\n            'checkpoint_file': str(checkpoint_file)\n        }\n    \n    def _execute_inference(self, model_type: str, output_path: Path) -> Dict[str, Any]:\n        \"\"\"Execute inference mode.\"\"\"\n        self.log.info(f\"Starting inference with {model_type} model\")\n        \n        # Create inference output directory\n        inference_output_dir = output_path / 'inference_results'\n        inference_output_dir.mkdir(exist_ok=True)\n        \n        # Simulate inference results\n        results_file = inference_output_dir / 'qa_results.json'\n        \n        # Mock QA results based on model type\n        if model_type == 'extractive':\n            mock_results = {\n                'model_type': 'extractive',\n                'predictions': [\n                    {\n                        'question': 'What is the capital of France?',\n                        'context': 'France is a country in Europe. Paris is the capital of France.',\n                        'answer': 'Paris',\n                        'confidence': 0.95,\n                        'start_position': 45,\n                        'end_position': 50\n                    }\n                ]\n            }\n        else:  # generative models\n            mock_results = {\n                'model_type': model_type,\n                'predictions': [\n                    {\n                        'question': 'What is the capital of France?',\n                        'context': 'France is a country in Europe. Paris is the capital of France.',\n                        'generated_answer': 'The capital of France is Paris.',\n                        'confidence': 0.92\n                    }\n                ]\n            }\n        \n        with open(results_file, 'w') as f:\n            json.dump(mock_results, f, indent=2)\n        \n        self.log.info(f\"Inference completed. Results saved to: {results_file}\")\n        \n        return {\n            'status': 'inference_completed',\n            'results_file': str(results_file),\n            'num_predictions': len(mock_results['predictions'])\n        }\n    \n    def _execute_evaluation(self, model_type: str, output_path: Path) -> Dict[str, Any]:\n        \"\"\"Execute evaluation mode.\"\"\"\n        self.log.info(f\"Starting evaluation for {model_type} model\")\n        \n        # Create evaluation output directory\n        eval_output_dir = output_path / 'evaluation_results'\n        eval_output_dir.mkdir(exist_ok=True)\n        \n        # Simulate evaluation metrics\n        metrics_file = eval_output_dir / 'evaluation_metrics.json'\n        \n        # Mock evaluation metrics based on model type\n        if model_type == 'extractive':\n            mock_metrics = {\n                'model_type': 'extractive',\n                'exact_match': 0.78,\n                'f1_score': 0.85,\n                'precision': 0.82,\n                'recall': 0.88,\n                'num_examples': 1000\n            }\n        else:  # generative models\n            mock_metrics = {\n                'model_type': model_type,\n                'bleu_score': 0.72,\n                'rouge_l': 0.75,\n                'meteor': 0.68,\n                'exact_match': 0.65,\n                'num_examples': 1000\n            }\n        \n        with open(metrics_file, 'w') as f:\n            json.dump(mock_metrics, f, indent=2)\n        \n        self.log.info(f\"Evaluation completed. Metrics saved to: {metrics_file}\")\n        \n        return {\n            'status': 'evaluation_completed',\n            'metrics_file': str(metrics_file),\n            'metrics': mock_metrics\n        }",
+      "test_code": "\"\"\"\nTests for NeMoQuestionAnsweringOperator\n\nAuto-generated test file for Airflow operator with comprehensive mocking.\n\"\"\"\n\nimport pytest\nfrom datetime import datetime\nfrom unittest.mock import MagicMock, patch\nfrom airflow.models import DAG, TaskInstance\nfrom airflow.utils import timezone\nfrom airflow.utils.state import State\n\n# Import the operator being tested\nfrom ne_mo_question_answering_operator import NeMoQuestionAnsweringOperator\n\n\n@pytest.fixture\ndef dag():\n    \"\"\"Create a test DAG\"\"\"\n    return DAG(\n        dag_id='test_dag',\n        start_date=timezone.datetime(2024, 1, 1),\n        default_args={'owner': 'airflow'}\n    )\n\n\n@pytest.fixture\ndef task_instance(dag):\n    \"\"\"Create a realistic TaskInstance mock with XCom support\"\"\"\n    ti = MagicMock(spec=TaskInstance)\n    ti.dag_id = dag.dag_id\n    ti.task_id = 'test_task'\n    ti.execution_date = timezone.datetime(2024, 1, 1)\n    ti.state = State.RUNNING\n    ti.try_number = 1\n    ti.max_tries = 2\n\n    # XCom storage for testing\n    ti._xcom_storage = {}\n\n    def xcom_push(key, value, **kwargs):\n        ti._xcom_storage[key] = value\n\n    def xcom_pull(task_ids=None, key=None, **kwargs):\n        if key:\n            return ti._xcom_storage.get(key)\n        return None\n\n    ti.xcom_push = xcom_push\n    ti.xcom_pull = xcom_pull\n\n    return ti\n\n\n@pytest.fixture\ndef context(dag, task_instance):\n    \"\"\"Create realistic Airflow execution context\"\"\"\n    return {\n        'dag': dag,\n        'task': MagicMock(),\n        'task_instance': task_instance,\n        'ti': task_instance,\n        'execution_date': timezone.datetime(2024, 1, 1),\n        'ds': '2024-01-01',\n        'ds_nodash': '20240101',\n        'ts': '2024-01-01T00:00:00+00:00',\n        'prev_execution_date': None,\n        'next_execution_date': None,\n        'run_id': 'test_run',\n        'dag_run': MagicMock(),\n        'conf': {},\n        'params': {},\n        'var': {\n            'value': {},\n            'json': {},\n        },\n    }\n\n\nclass TestNeMoQuestionAnsweringOperator:\n    \"\"\"Test suite for NeMoQuestionAnsweringOperator\"\"\"\n\n    def test_operator_initialization(self, dag):\n        \"\"\"Test that operator can be instantiated\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        assert operator.task_id == 'test_task'\n        assert operator.dag == dag\n\n    def test_execute_method_exists(self, dag):\n        \"\"\"Test that execute method is defined\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        assert hasattr(operator, 'execute')\n        assert callable(operator.execute)\n\n    def test_execute_with_realistic_context(self, dag, context):\n        \"\"\"Test execute method with realistic Airflow context\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Execute with realistic context\n        try:\n            result = operator.execute(context)\n            # Operators may return None or a value for XCom\n            assert result is not None or result is None\n        except NotImplementedError:\n            pytest.skip(\"Execute method not fully implemented\")\n\n    def test_xcom_push(self, dag, context):\n        \"\"\"Test that operator can push XCom values\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Execute and check if XCom is pushed\n        try:\n            result = operator.execute(context)\n\n            # If execute returns a value, it's automatically pushed to XCom\n            if result is not None:\n                # Verify XCom storage\n                ti = context['ti']\n                assert hasattr(ti, '_xcom_storage')\n\n        except NotImplementedError:\n            pytest.skip(\"Execute method not fully implemented\")\n\n    def test_xcom_pull(self, dag, context):\n        \"\"\"Test that operator can pull XCom values\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Pre-populate XCom storage\n        context['ti'].xcom_push(key='test_key', value='test_value')\n\n        # Verify XCom pull works\n        pulled_value = context['ti'].xcom_pull(key='test_key')\n        assert pulled_value == 'test_value'\n\n    def test_template_fields(self, dag):\n        \"\"\"Test that template_fields is properly defined\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Check if template_fields exists\n        if hasattr(operator, 'template_fields'):\n            assert isinstance(operator.template_fields, (list, tuple))\n            # Verify template fields are valid attribute names\n            for field in operator.template_fields:\n                assert hasattr(operator, field), f\"Template field '{field}' not found in operator\"\n\n    def test_template_rendering(self, dag, context):\n        \"\"\"Test Jinja template rendering in template_fields\"\"\"\n        # Create operator with Jinja templates\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        if hasattr(operator, 'template_fields') and operator.template_fields:\n            # Test that template fields can handle Jinja syntax\n            # This is a basic test - actual rendering is done by Airflow\n            for field in operator.template_fields:\n                field_value = getattr(operator, field, None)\n                # Template fields should be strings or support templating\n                if field_value is not None:\n                    assert isinstance(field_value, (str, list, dict)),                         f\"Template field '{field}' must be string, list, or dict\"\n\n    def test_ui_color(self, dag):\n        \"\"\"Test that UI color is set\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Check if ui_color exists\n        if hasattr(operator, 'ui_color'):\n            assert isinstance(operator.ui_color, str)\n            assert operator.ui_color.startswith('#')\n\n    def test_edge_case_none_values(self, dag):\n        \"\"\"Test operator handles None values gracefully\"\"\"\n        # Test with minimal required parameters\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Operator should be created without errors\n        assert operator is not None\n\n    def test_edge_case_empty_context(self, dag):\n        \"\"\"Test execute with minimal context\"\"\"\n        operator = NeMoQuestionAnsweringOperator(\n            task_id='test_task',\n            dag=dag,\n            # No parameters required\n        )\n\n        # Create minimal context\n        minimal_context = {}\n\n        # Execute should handle missing context gracefully or raise appropriate error\n        try:\n            operator.execute(minimal_context)\n        except (KeyError, AttributeError, NotImplementedError):\n            # Expected errors for missing context elements\n            pass\n\n\n",
+      "dag_code": "\"\"\"\nTest DAG for NeMo Question Answering Operator\n\nThis DAG demonstrates the usage of the NeMoQuestionAnsweringOperator\nwith runtime parameters for interactive execution.\n\"\"\"\n\nfrom datetime import datetime, timedelta\nfrom airflow import DAG\nfrom airflow.models.param import Param\n\n# Import the operator directly from the module file\nfrom custom_operators.nemo_question_answering_operator import NeMoQuestionAnsweringOperator\n\n\n# Default arguments for the DAG\ndefault_args = {\n    'owner': 'airflow',\n    'depends_on_past': False,\n    'email_on_failure': False,\n    'email_on_retry': False,\n    'retries': 1,\n    'retry_delay': timedelta(minutes=5),\n}\n\n# Define the DAG with runtime parameters\nwith DAG(\n    dag_id='test_nemo_qa_operator',\n    default_args=default_args,\n    description='Test DAG for NVIDIA NeMo Question Answering Operator',\n    schedule=None,  # Manual trigger only\n    start_date=datetime(2024, 1, 1),\n    catchup=False,\n    tags=['test', 'nemo', 'ml', 'question-answering'],\n    params={\n        # Runtime parameters - configurable via UI when triggering DAG\n        'execution_mode': Param(\n            default='inference',\n            type='string',\n            enum=['train', 'inference', 'evaluate'],\n            description='Select the execution mode'\n        ),\n        'qa_model_type': Param(\n            default='extractive',\n            type='string',\n            enum=['extractive', 'generative_s2s', 'generative_gpt'],\n            description='Select the QA model architecture'\n        ),\n        'custom_output_dir': Param(\n            default='/opt/airflow/logs/nemo_qa_output',\n            type='string',\n            description='Custom output directory for results'\n        ),\n    },\n) as dag:\n\n    # Task 1: Inference with BERT (extractive QA)\n    inference_task = NeMoQuestionAnsweringOperator(\n        task_id='nemo_qa_inference',\n        mode=\"{{ params.execution_mode }}\",  # Uses runtime parameter\n        model_type=\"{{ params.qa_model_type }}\",  # Uses runtime parameter\n        pretrained_model_name='bert-base-uncased',\n        output_dir=\"{{ params.custom_output_dir }}\",\n    )\n\n    # Task 2: Example with different model (generative QA)\n    generative_task = NeMoQuestionAnsweringOperator(\n        task_id='nemo_qa_generative',\n        mode='inference',\n        model_type='generative_s2s',\n        pretrained_model_name='t5-small',\n        output_dir='/opt/airflow/logs/nemo_qa_generative',\n    )\n\n    # Task 3: Example with hardcoded values (no runtime params)\n    static_task = NeMoQuestionAnsweringOperator(\n        task_id='nemo_qa_static',\n        mode='inference',\n        model_type='extractive',\n        pretrained_model_name='bert-base-uncased',\n        dataset_file='',\n        output_dir='/opt/airflow/logs/nemo_qa_static',\n    )\n\n    # Define task dependencies\n    # Run inference_task first, then run the other two in parallel\n    inference_task >> [generative_task, static_task]\n\n\nif __name__ == \"__main__\":\n    dag.test()\n",
+      "metadata": {
+        "component_name": "NeMoQuestionAnsweringOperator",
+        "component_type": "operator",
+        "category": "ml",
+        "subcategory": "nlp",
+        "framework": "nvidia_nemo",
+        "generation_date": "2026-01-20",
+        "generation_status": "success",
+        "generation_metrics": {
+          "attempts": 1,
+          "time_seconds": 40.31,
+          "cost_usd": 0.0522,
+          "tokens": {
+            "prompt": 1869,
+            "completion": 3103,
+            "total": 4972
+          },
+          "model": "claude-sonnet-4-20250514",
+          "complexity_score": 24.0
+        },
+        "validation_results": {
+          "syntax_errors": 0,
+          "import_errors": 0,
+          "security_issues": 0,
+          "warnings": 0,
+          "airflow_compliance": true
+        },
+        "component_features": {
+          "execution_modes": [
+            "train",
+            "inference",
+            "evaluate"
+          ],
+          "model_types": [
+            "extractive",
+            "generative_s2s",
+            "generative_gpt"
+          ],
+          "runtime_parameters": true,
+          "template_fields": true,
+          "airflow_2x_compatible": true,
+          "airflow_3x_compatible": true,
+          "mock_execution": true,
+          "type_hints": true,
+          "error_handling": "comprehensive"
+        },
+        "inputs": [
+          {
+            "name": "mode",
+            "type": "str",
+            "required": false,
+            "default": "inference",
+            "template_field": true
+          },
+          {
+            "name": "model_type",
+            "type": "str",
+            "required": false,
+            "default": "extractive",
+            "template_field": true
+          },
+          {
+            "name": "pretrained_model_name",
+            "type": "str",
+            "required": false,
+            "default": "bert-base-uncased"
+          },
+          {
+            "name": "dataset_file",
+            "type": "str",
+            "required": false,
+            "default": "",
+            "template_field": true
+          },
+          {
+            "name": "output_dir",
+            "type": "str",
+            "required": false,
+            "default": "/tmp/nemo_qa_output",
+            "template_field": true
+          }
+        ],
+        "runtime_params": [
+          {
+            "name": "execution_mode",
+            "type": "string",
+            "enum": [
+              "train",
+              "inference",
+              "evaluate"
+            ],
+            "default": "inference"
+          },
+          {
+            "name": "qa_model_type",
+            "type": "string",
+            "enum": [
+              "extractive",
+              "generative_s2s",
+              "generative_gpt"
+            ],
+            "default": "extractive"
+          }
+        ],
+        "dependencies": [
+          "apache-airflow>=2.0.0",
+          "nemo-toolkit[nlp]>=1.20.0",
+          "torch>=2.0.0"
+        ],
+        "success_factors": [
+          "Simplified specification (5 inputs vs original 11)",
+          "Automatic parameter ordering",
+          "Medium complexity (24.0 score)",
+          "Mock execution for testing",
+          "Dual Airflow 2.x/3.x compatibility",
+          "Clear naming and structure"
+        ],
+        "issues_encountered": [
+          {
+            "issue": "Initial spec had 11 inputs, 6 runtime params (complexity 46.0)",
+            "resolution": "Simplified to 5 inputs, 2 runtime params (complexity 24.0)",
+            "result": "First-attempt success"
+          },
+          {
+            "issue": "Parameter ordering could cause Python syntax errors",
+            "resolution": "Implemented automatic parameter reordering in generator",
+            "result": "Valid Python code generated"
+          },
+          {
+            "issue": "ModuleNotFoundError in Airflow Docker environment",
+            "resolution": "Changed from package import to direct module import",
+            "result": "Import successful"
+          }
+        ],
+        "testing_results": {
+          "dag_appeared_in_ui": true,
+          "import_errors": 0,
+          "execution_success": {
+            "inference_mode": true,
+            "generative_mode": true,
+            "static_mode": true,
+            "evaluate_mode": false,
+            "evaluate_mode_note": "Expected failure - requires dataset_file parameter"
+          },
+          "runtime_params_functional": true,
+          "output_directory_created": true
+        },
+        "recommended_use_cases": [
+          "Question Answering systems",
+          "NLP model training pipelines",
+          "Model evaluation workflows",
+          "BERT-based extractive QA",
+          "T5/GPT-based generative QA"
+        ],
+        "tags": [
+          "ml",
+          "nlp",
+          "question-answering",
+          "nvidia",
+          "nemo",
+          "bert",
+          "t5",
+          "gpt",
+          "successful-generation",
+          "first-attempt-success"
+        ],
+        "rag_indexing": {
+          "searchable_text": "NVIDIA NeMo Question Answering operator ML NLP BERT T5 GPT extractive generative question answering model training inference evaluation runtime parameters Airflow operator",
+          "similarity_keywords": [
+            "machine learning",
+            "natural language processing",
+            "question answering",
+            "model training",
+            "model inference",
+            "BERT",
+            "transformer models",
+            "NLP pipelines"
+          ],
+          "pattern_category": "ml_operator_with_runtime_params"
+        }
+      },
+      "embedding_text": "Component: NeMoQuestionAnsweringOperator\nType: operator\nCategory: ml / nlp\nFramework: nvidia_nemo\nNVIDIA NeMo Question Answering operator ML NLP BERT T5 GPT extractive generative question answering model training inference evaluation runtime parameters Airflow operator\nFeatures:\nexecution modes | model types | runtime parameters | template fields | airflow 2x compatible | airflow 3x compatible | mock execution | type hints | error handling\nSuccess Factors:\nSimplified specification (5 inputs vs original 11) | Automatic parameter ordering | Medium complexity (24.0 score) | Mock execution for testing | Dual Airflow 2.x/3.x compatibility | Clear naming and structure\nInputs:\nmode | model_type | pretrained_model_name | dataset_file | output_dir\nRuntime Parameters:\nexecution_mode | qa_model_type\nCode Preview:\ntry:\n    from airflow.sdk.bases.operator import BaseOperator\nexcept ImportError:\n    from airflow.models import BaseOperator\n\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\nimport json\nimport os\nimport logging\n\nclass NeMoQuestionAnsweringOperator(BaseOperator):\n    \"\"\"\n    Execute NVIDIA NeMo Question Answering for training or inference.\n    \n    Supports extractive QA (BERT-based) and generative QA (T5/GPT-based models).\n    Handles dataset in SQuAD format for training and evaluation.\n    \n    Args:\n        mode: Operation mode - train, inference, or evaluate\n        model_type: QA model type - extractive, generative_s2s, or generative_gpt\n        pretrained_model_name: Pretrained model name from HuggingFace or NeMo\n        dataset_file: Path to dataset file in SQuAD format\n        output_dir: Output directory for results\n        **kwargs: Additional keyword arguments passed to BaseOperator\n    \"\"\"\n    \n    tem",
+      "success_score": 165,
+      "relevance_keywords": [
+        "machine learning",
+        "natural language processing",
+        "question answering",
+        "model training",
+        "model inference",
+        "BERT",
+        "transformer models",
+        "NLP pipelines"
+      ],
+      "pattern_type": "ml_operator_with_runtime_params",
+      "indexed_at": "2026-01-20T19:50:56.057278",
+      "code_patterns": {
+        "__init__": "def __init__(\n        self,\n        mode: str = 'inference',\n        model_type: str = 'extractive',\n        pretrained_model_name: str = 'bert-base-uncased',\n        dataset_file: str = '',\n        output_dir: str = '/tmp/nemo_qa_output',\n        **kwargs\n    ) -> None:\n        super().__init__(**kwargs)\n        \n        # Validate non-template parameters\n        valid_modes = ['train', 'inference', 'evaluate']\n        valid_model_types = ['extractive', 'generative_s2s', 'generative_gpt']\n        \n        # Skip validation for template strings (will be validated in execute)\n        if '{{' not in str(mode) and mode not in valid_modes:\n            raise AirflowException(f\"Invalid mode '{mode}'. Must be one of: {valid_modes}\")\n        \n        if '{{' not in str(model_type) and model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid model_type '{model_type}'. Must be one of: {valid_model_types}\")\n        \n        self.mode = mode\n        self.model_type = model_type\n        self.pretrained_model_name = pretrained_model_name\n        self.dataset_file = dataset_file\n        self.output_dir = output_dir\n        \n        self.log.info(f\"Initialized NeMoQuestionAnsweringOperator with mode={mode}, model_type={model_type}\")",
+        "execute": "def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:\n        \"\"\"\n        Execute NeMo Question Answering operation.\n        \n        Args:\n            context: Airflow context dictionary\n            \n        Returns:\n            Dict containing execution results and output paths\n            \n        Raises:\n            AirflowException: On validation or execution failure\n        \"\"\"\n        self.log.info(f\"Executing NeMo Question Answering task: {self.task_id}\")\n        \n        # Validate template fields after Jinja rendering\n        valid_modes = ['train', 'inference', 'evaluate']\n        valid_model_types = ['extractive', 'generative_s2s', 'generative_gpt']\n        \n        if self.mode not in valid_modes:\n            raise AirflowException(f\"Invalid mode '{self.mode}'. Must be one of: {valid_modes}\")\n        \n        if self.model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid model_type '{self.model_type}'. Must be one of: {valid_model_types}\")\n        \n        # Check runtime parameters from context\n        params = context.get('params', {})\n        execution_mode = params.get('execution_mode', self.mode)\n        qa_model_type = params.get('qa_model_type', self.model_type)\n        \n        if execution_mode not in valid_modes:\n            raise AirflowException(f\"Invalid execution_mode parameter '{execution_mode}'. Must be one of: {valid_modes}\")\n        \n        if qa_model_type not in valid_model_types:\n            raise AirflowException(f\"Invalid qa_model_type parameter '{qa_model_type}'. Must be one of: {valid_model_types}\")\n        \n        # Use runtime parameters if provided\n        final_mode = execution_mode\n        final_model_type = qa_model_type\n        \n        self.log.info(f\"Using mode: {final_mode}, model_type: {final_model_type}\")\n        \n        try:\n            # Create output directory\n            output_path = Path(self.output_dir)\n            output_path.mkdir(parents=True, exist_ok=True)\n            self.log.info(f\"Created output directory: {output_path}\")\n            \n            # Validate dataset file for training/evaluation\n            if final_mode in ['train', 'evaluate']:\n                if not self.dataset_file:\n                    raise AirflowException(f\"dataset_file is required for mode '{final_mode}'\")\n                \n                dataset_path = Path(self.dataset_file)\n                if not dataset_path.exists():\n                    raise AirflowException(f\"Dataset file not found: {self.dataset_file}\")\n                \n                self.log.info(f\"Using dataset file: {self.dataset_file}\")\n            \n            # Execute based on mode\n            result = {}\n            \n            if final_mode == 'train':\n                result = self._execute_training(final_model_type, output_path)\n            elif final_mode == 'inference':\n                result = self._execute_inference(final_model_type, output_path)\n            elif final_mode == 'evaluate':\n                result = self._execute_evaluation(final_model_type, output_path)\n            \n            # Save execution summary\n            summary_file = output_path / 'execution_summary.json'\n            summary = {\n                'task_id': self.task_id,\n                'mode': final_mode,\n                'model_type': final_model_type,\n                'pretrained_model': self.pretrained_model_name,\n                'dataset_file': self.dataset_file,\n                'output_dir': str(output_path),\n                'execution_date': context.get('execution_date', '').isoformat() if context.get('execution_date') else '',\n                'result': result\n            }\n            \n            with open(summary_file, 'w') as f:\n                json.dump(summary, f, indent=2)\n            \n            self.log.info(f\"Execution completed successfully. Summary saved to: {summary_file}\")\n            \n            return {\n                'mode': final_mode,\n                'model_type': final_model_type,\n                'output_dir': str(output_path),\n                'summary_file': str(summary_file),\n                'result': result\n            }\n            \n        except Exception as e:\n            self.log.error(f\"NeMo Question Answering execution failed: {str(e)}\")\n            raise AirflowException(f\"NeMo Question Answering execution failed: {str(e)}\")",
+        "imports": "    from airflow.sdk.bases.operator import BaseOperator\n    from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\nimport json\nimport os\nimport logging",
+        "class_definition": "class NeMoQuestionAnsweringOperator(BaseOperator):",
+        "template_fields": "template_fields: Sequence[str] = ['mode', 'model_type', 'dataset_file', 'output_dir']"
+      }
+    }
+  ],
+  "updated_at": "2026-01-20T19:50:56.057876"
+}

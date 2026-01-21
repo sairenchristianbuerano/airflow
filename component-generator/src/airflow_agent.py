@@ -27,6 +27,14 @@ from src.test_generator import TestFileGenerator
 from src.documentation_generator import DocumentationGenerator
 from src.error_tracker import ErrorTracker
 from src.learning_database import LearningDatabase
+from src.pattern_storage import PatternStorage
+from src.pattern_extractor import PatternExtractor
+from src.error_learning import ErrorPatternExtractor
+from src.error_storage import ErrorPatternStorage
+from src.fix_strategies import FixStrategyManager
+from src.library_tracker import LibraryTracker
+from src.library_recommender import LibraryRecommender
+from src.native_fallback_generator import NativeFallbackGenerator
 
 logger = structlog.get_logger()
 
@@ -65,6 +73,27 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         self.doc_generator = DocumentationGenerator()
         self.error_tracker = ErrorTracker()
         self.learning_db = LearningDatabase()
+
+        # Phase 1: Pattern learning system
+        patterns_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "patterns.db")
+        self.pattern_storage = PatternStorage(patterns_db_path)
+        self.pattern_extractor = PatternExtractor()
+
+        # Phase 2: Error learning system
+        error_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "error_patterns.db")
+        self.error_storage = ErrorPatternStorage(error_db_path)
+        self.error_extractor = ErrorPatternExtractor()
+        self.fix_strategy_manager = FixStrategyManager()
+
+        # Phase 3: Library compatibility tracking
+        library_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "library_compatibility.db")
+        self.library_tracker = LibraryTracker(library_db_path)
+        self.library_recommender = LibraryRecommender(self.library_tracker)
+
+        # Phase 4: Native Python fallback generation
+        fallback_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "fallback_code.db")
+        self.fallback_generator = NativeFallbackGenerator(fallback_db_path)
+
         self.logger = logger.bind(component="airflow_generator")
 
     def _analyze_complexity(self, spec: OperatorSpec) -> str:
@@ -181,10 +210,56 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         # 2. Retrieve similar patterns from RAG (if available)
         similar_patterns = await self._retrieve_similar_patterns(spec)
 
-        # 3. Generate code with retries
+        # 2.5 Phase 3: Check library compatibility
+        library_analysis = None
+        if spec.dependencies:
+            self.logger.info("=" * 80)
+            self.logger.info("Phase 3: Checking library compatibility...")
+            self.logger.info("=" * 80)
+
+            library_analysis = self.library_tracker.check_dependencies(spec.__dict__)
+
+            if not library_analysis.get("all_compatible", True):
+                self.logger.warning(
+                    "Some dependencies may not be compatible",
+                    incompatible=library_analysis.get("alternatives_needed", [])
+                )
+                for rec in library_analysis.get("recommendations", []):
+                    self.logger.info(f"  Recommendation: {rec}")
+            else:
+                self.logger.info("All dependencies appear compatible")
+
+        # 2.6 Phase 4: Generate native fallback suggestions for incompatible libraries
+        fallback_suggestions = None
+        if library_analysis and library_analysis.get("alternatives_needed"):
+            self.logger.info("=" * 80)
+            self.logger.info("Phase 4: Generating native fallback suggestions...")
+            self.logger.info("=" * 80)
+
+            unavailable_libs = library_analysis.get("alternatives_needed", [])
+            fallback_suggestions = self.fallback_generator.suggest_fallback_for_code(
+                code="",  # We don't have code yet
+                unavailable_libraries=unavailable_libs
+            )
+
+            if fallback_suggestions.get("has_fallbacks"):
+                self.logger.info(
+                    "Native fallbacks available",
+                    libraries_with_fallbacks=len([s for s in fallback_suggestions.get("suggestions", []) if s.get("available_fallbacks")])
+                )
+            else:
+                self.logger.warning(
+                    "No native fallbacks available for some libraries",
+                    unavailable=unavailable_libs
+                )
+
+        # 3. Generate code with retries (Phase 2: Error Learning Integration)
         code = None
         validation_result = None
         attempts = 0
+        last_error_patterns = None
+        last_fix_strategy = None
+        error_signature = None
 
         for attempt in range(1, self.max_retries + 1):
             attempts = attempt
@@ -193,12 +268,16 @@ class AirflowComponentGenerator(BaseCodeGenerator):
             self.logger.info(f"{'=' * 80}\n")
 
             try:
-                # Generate code
+                # Generate code (pass error patterns for retry with learned fixes)
                 generated_code, prompt_tokens, completion_tokens = await self._generate_code(
                     spec,
                     dependency_validation,
                     similar_patterns,
-                    validation_result  # Pass previous validation for retry context
+                    validation_result,  # Pass previous validation for retry context
+                    last_error_patterns,  # Phase 2: Pass error patterns
+                    last_fix_strategy,  # Phase 2: Pass fix strategy
+                    library_analysis,  # Phase 3: Pass library compatibility analysis
+                    fallback_suggestions  # Phase 4: Pass native fallback suggestions
                 )
 
                 total_prompt_tokens += prompt_tokens
@@ -216,6 +295,20 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                         f"✅ Generation successful on attempt {attempt}",
                         component_name=spec.name
                     )
+
+                    # Phase 2: Record successful fix if this was a retry
+                    if attempt > 1 and error_signature and last_fix_strategy:
+                        self.error_storage.record_fix_attempt(
+                            error_signature=error_signature,
+                            strategy_name=last_fix_strategy,
+                            success=True,
+                            attempts_to_fix=attempt - 1
+                        )
+                        self.logger.info(
+                            f"📚 Recorded successful fix strategy",
+                            strategy=last_fix_strategy
+                        )
+
                     break
                 else:
                     self.logger.warning(
@@ -224,12 +317,68 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                         warnings=len(validation_result.warnings)
                     )
 
-                    # Track errors
+                    # Track errors (legacy)
                     if validation_result.errors:
                         self.error_tracker.track_error(
                             validation_result.errors,
                             spec.name,
                             attempt
+                        )
+
+                    # Phase 2: Extract error patterns and select fix strategy
+                    error_message = "; ".join(validation_result.errors)
+                    last_error_patterns = self.error_extractor.extract_error_patterns(
+                        error_message=error_message,
+                        code=generated_code,
+                        spec=spec.dict(),
+                        attempt_number=attempt,
+                        metadata={
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens
+                        }
+                    )
+
+                    # Get error signature for tracking
+                    error_signature = last_error_patterns.get('error_classification', {}).get('error_signature')
+
+                    # Store error pattern in database
+                    self.error_storage.store_error_pattern(
+                        error_message=error_message,
+                        error_patterns=last_error_patterns,
+                        component_name=spec.name,
+                        code=generated_code,
+                        spec=spec.dict(),
+                        attempt_number=attempt
+                    )
+
+                    # Look up similar errors with successful fixes
+                    error_type = last_error_patterns.get('error_classification', {}).get('error_type', 'unknown')
+                    similar_errors = self.error_storage.get_similar_errors(
+                        error_type=error_type,
+                        category=spec.category,
+                        component_type=spec.component_type,
+                        min_confidence=0.5
+                    )
+
+                    # Select best fix strategy
+                    last_fix_strategy = self.fix_strategy_manager.select_best_strategy(
+                        error_patterns=last_error_patterns,
+                        similar_errors=similar_errors
+                    )
+
+                    self.logger.info(
+                        f"🔧 Phase 2: Selected fix strategy for retry",
+                        strategy=last_fix_strategy,
+                        error_type=error_type,
+                        similar_errors_found=len(similar_errors)
+                    )
+
+                    # Record failed fix attempt if this was a retry with a strategy
+                    if attempt > 1 and error_signature and last_fix_strategy:
+                        self.error_storage.record_fix_attempt(
+                            error_signature=error_signature,
+                            strategy_name=last_fix_strategy,
+                            success=False
                         )
 
             except Exception as e:
@@ -290,6 +439,74 @@ class AirflowComponentGenerator(BaseCodeGenerator):
             spec_complexity="medium"  # Could be calculated based on spec
         )
 
+        # 7.5. Phase 1: Extract and store patterns from successful generation
+        try:
+            self.logger.info("📚 Extracting patterns from successful generation...")
+
+            # Extract patterns using Phase 1 pattern extractor
+            metadata = {
+                "attempts": attempts,
+                "total_time": total_time,
+                "tokens": total_prompt_tokens + total_completion_tokens,
+                "first_attempt_success": first_attempt_success
+            }
+
+            patterns = self.pattern_extractor.extract_patterns(code, spec.dict(), metadata)
+
+            # Store patterns in database
+            self.pattern_storage.store_component_patterns(
+                component_name=spec.name,
+                code=code,
+                patterns=patterns,
+                metadata=metadata,
+                success=True
+            )
+
+            self.logger.info(
+                "✅ Patterns extracted and stored successfully",
+                pattern_types=len(patterns)
+            )
+
+        except Exception as e:
+            self.logger.warning("Failed to extract/store patterns", error=str(e))
+
+        # 7.6. Phase 3: Log successful library usage for learning
+        if spec.dependencies:
+            try:
+                self.logger.info("📚 Logging library usage for learning...")
+                for dep in spec.dependencies:
+                    self.library_tracker.log_library_usage(
+                        library_name=dep,
+                        component_name=spec.name,
+                        import_success=True,
+                        execution_success=True,
+                        component_type=spec.component_type
+                    )
+                self.logger.info(
+                    "✅ Library usage logged",
+                    libraries=len(spec.dependencies)
+                )
+            except Exception as e:
+                self.logger.warning("Failed to log library usage", error=str(e))
+
+        # 7.7. Phase 4: Log successful fallback usage for learning
+        if fallback_suggestions and fallback_suggestions.get("has_fallbacks"):
+            try:
+                self.logger.info("📚 Logging fallback usage for learning...")
+                for suggestion in fallback_suggestions.get("suggestions", []):
+                    library_name = suggestion.get("library", "")
+                    for fallback in suggestion.get("available_fallbacks", []):
+                        operation = fallback.get("operation", "unknown")
+                        self.fallback_generator.log_fallback_usage(
+                            library_name=library_name,
+                            operation_type=operation,
+                            component_name=spec.name,
+                            success=True  # Since generation succeeded
+                        )
+                self.logger.info("✅ Fallback usage logged")
+            except Exception as e:
+                self.logger.warning("Failed to log fallback usage", error=str(e))
+
         # 8. Create final component
         component = GeneratedComponent(
             name=spec.name,
@@ -318,13 +535,60 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         return component
 
     async def _retrieve_similar_patterns(self, spec: OperatorSpec) -> List[Dict]:
-        """Retrieve similar patterns from RAG service"""
-        if not self.rag_service_url:
-            self.logger.info("RAG service not configured, skipping pattern retrieval")
+        """
+        Retrieve similar patterns from local pattern database (Phase 1 integration)
+
+        Uses the PatternStorage to find high-confidence patterns from successful
+        component generations that match the category and component type.
+        """
+        try:
+            self.logger.info(
+                "Retrieving similar patterns from local database...",
+                category=spec.category,
+                component_type=spec.component_type
+            )
+
+            # Get best patterns for this category/type
+            patterns = self.pattern_storage.get_best_patterns(
+                category=spec.category,
+                component_type=spec.component_type,
+                min_confidence=0.7,  # Only use patterns with 70%+ success rate
+                limit=5  # Top 5 most successful patterns
+            )
+
+            # Get similar complete components for reference
+            similar_components = self.pattern_storage.get_similar_components(
+                category=spec.category,
+                subcategory=spec.subcategory if hasattr(spec, 'subcategory') else None,
+                min_success_score=150,  # High-quality components only
+                limit=2  # Top 2 similar components
+            )
+
+            self.logger.info(
+                f"✅ Retrieved {len(patterns)} patterns and {len(similar_components)} similar components",
+                patterns=len(patterns),
+                components=len(similar_components)
+            )
+
+            # Format patterns for prompt injection
+            formatted_patterns = {
+                "code_patterns": patterns,
+                "similar_components": similar_components
+            }
+
+            return [formatted_patterns] if patterns or similar_components else []
+
+        except Exception as e:
+            self.logger.warning("Error retrieving patterns from local database", error=str(e))
+            # Fallback to external RAG service if available
+            if self.rag_service_url:
+                return await self._retrieve_from_external_rag(spec)
             return []
 
+    async def _retrieve_from_external_rag(self, spec: OperatorSpec) -> List[Dict]:
+        """Fallback: Retrieve patterns from external RAG service"""
         try:
-            self.logger.info("Retrieving similar patterns from RAG...")
+            self.logger.info("Falling back to external RAG service...")
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
@@ -340,17 +604,17 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                 if response.status_code == 200:
                     data = response.json()
                     patterns = data.get("results", [])
-                    self.logger.info(f"Retrieved {len(patterns)} similar patterns")
+                    self.logger.info(f"Retrieved {len(patterns)} patterns from external RAG")
                     return patterns
                 else:
                     self.logger.warning(
-                        "Failed to retrieve patterns",
+                        "Failed to retrieve patterns from external RAG",
                         status_code=response.status_code
                     )
                     return []
 
         except Exception as e:
-            self.logger.warning("Error retrieving patterns", error=str(e))
+            self.logger.warning("Error retrieving patterns from external RAG", error=str(e))
             return []
 
     async def _generate_code(
@@ -358,10 +622,24 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         spec: OperatorSpec,
         dependency_validation: Dict[str, Any],
         similar_patterns: List[Dict],
-        previous_validation: Optional[ValidationResult] = None
+        previous_validation: Optional[ValidationResult] = None,
+        error_patterns: Optional[Dict[str, Any]] = None,  # Phase 2
+        fix_strategy: Optional[str] = None,  # Phase 2
+        library_analysis: Optional[Dict[str, Any]] = None,  # Phase 3
+        fallback_suggestions: Optional[Dict[str, Any]] = None  # Phase 4
     ) -> tuple[str, int, int]:
         """
         Generate code using Claude AI
+
+        Args:
+            spec: Component specification
+            dependency_validation: Validated dependencies
+            similar_patterns: Similar patterns from Phase 1
+            previous_validation: Previous validation result (for retry)
+            error_patterns: Phase 2 - Extracted error patterns from last attempt
+            fix_strategy: Phase 2 - Selected fix strategy for retry
+            library_analysis: Phase 3 - Library compatibility analysis
+            fallback_suggestions: Phase 4 - Native fallback suggestions
 
         Returns:
             Tuple of (code, prompt_tokens, completion_tokens)
@@ -369,12 +647,16 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         # Analyze complexity to select optimal model
         selected_model = self._analyze_complexity(spec)
 
-        # Build comprehensive prompt
+        # Build comprehensive prompt (Phase 2: Include fix strategy if on retry)
         prompt = self._build_prompt(
             spec,
             dependency_validation,
             similar_patterns,
-            previous_validation
+            previous_validation,
+            error_patterns,  # Phase 2
+            fix_strategy,  # Phase 2
+            library_analysis,  # Phase 3
+            fallback_suggestions  # Phase 4
         )
 
         self.logger.debug("Sending request to Claude API...", model=selected_model)
@@ -424,9 +706,13 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         spec: OperatorSpec,
         dependency_validation: Dict[str, Any],
         similar_patterns: List[Dict],
-        previous_validation: Optional[ValidationResult] = None
+        previous_validation: Optional[ValidationResult] = None,
+        error_patterns: Optional[Dict[str, Any]] = None,  # Phase 2
+        fix_strategy: Optional[str] = None,  # Phase 2
+        library_analysis: Optional[Dict[str, Any]] = None,  # Phase 3
+        fallback_suggestions: Optional[Dict[str, Any]] = None  # Phase 4
     ) -> str:
-        """Build comprehensive prompt for Claude"""
+        """Build comprehensive prompt for Claude (Phase 2: Includes fix strategy, Phase 3: Library recommendations, Phase 4: Native fallbacks)"""
 
         component_type = spec.component_type
         base_class = spec.base_class
@@ -532,18 +818,160 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                 prompt += f"- {provider['provider_package']}: {provider['description']}\n"
             prompt += "\n"
 
-        # Add similar patterns if available
+        # Add learned patterns from Phase 1 (Pattern Learning System)
         if similar_patterns:
-            prompt += "## Similar Patterns (for reference)\n\n"
-            for i, pattern in enumerate(similar_patterns[:2], 1):
-                prompt += f"### Pattern {i}: {pattern.get('name', 'Unknown')}\n"
-                prompt += f"```python\n{pattern.get('code', '')[:500]}...\n```\n\n"
+            prompt += "## 🎓 Learned Patterns from Successful Components\n\n"
+            prompt += "**Use these proven patterns to increase success rate:**\n\n"
+
+            # Extract patterns from our structured format
+            for pattern_group in similar_patterns:
+                if isinstance(pattern_group, dict):
+                    # Code patterns (structural, import, etc.)
+                    code_patterns = pattern_group.get('code_patterns', [])
+                    if code_patterns:
+                        prompt += "### Proven Code Patterns\n\n"
+                        for pattern in code_patterns[:5]:  # Top 5 patterns
+                            pattern_type = pattern.get('pattern_type', 'unknown')
+                            pattern_name = pattern.get('pattern_name', 'unnamed')
+                            confidence = pattern.get('confidence_score', 0) * 100
+                            pattern_data = json.loads(pattern.get('pattern_data', '{}'))
+
+                            prompt += f"**{pattern_type.upper()} Pattern** ({pattern_name}) - Confidence: {confidence:.0f}%\n"
+
+                            # Inject pattern-specific guidance
+                            if pattern_type == 'import':
+                                dual_imports = pattern_data.get('dual_imports', [])
+                                if dual_imports:
+                                    prompt += "  - **Use dual imports for Airflow 2.x/3.x compatibility:**\n"
+                                    for di in dual_imports:
+                                        prompt += f"    ```python\n    try:\n        from {di['primary']}\n    except ImportError:\n        from {di['fallback']}\n    ```\n"
+
+                            elif pattern_type == 'template_fields':
+                                template_fields = pattern_data.get('template_fields', [])
+                                if template_fields:
+                                    prompt += f"  - **Declare template_fields:** {', '.join(template_fields)}\n"
+                                validation = pattern_data.get('validation_pattern')
+                                if validation:
+                                    prompt += f"  - **Template validation pattern:** `{validation}`\n"
+
+                            elif pattern_type == 'parameter_ordering':
+                                prompt += f"  - **Ordering strategy:** {pattern_data.get('ordering_strategy', 'standard')}\n"
+                                prompt += f"  - **Required params first:** {pattern_data.get('required_first', True)}\n"
+
+                            elif pattern_type == 'runtime_params':
+                                access_pattern = pattern_data.get('access_pattern')
+                                if access_pattern:
+                                    prompt += f"  - **Access runtime params:** `{access_pattern}`\n"
+
+                            elif pattern_type == 'error_handling':
+                                exception_type = pattern_data.get('exception_type', 'AirflowException')
+                                prompt += f"  - **Use {exception_type} for errors**\n"
+
+                            prompt += "\n"
+
+                    # Similar complete components for reference
+                    similar_components = pattern_group.get('similar_components', [])
+                    if similar_components:
+                        prompt += "### Similar Successful Components (for reference)\n\n"
+                        for comp in similar_components[:2]:  # Top 2 components
+                            comp_name = comp.get('component_name', 'Unknown')
+                            success_score = comp.get('success_score', 0)
+                            complexity = comp.get('complexity_score', 0)
+                            code_snippet = comp.get('complete_code', '')[:800]  # First 800 chars
+
+                            prompt += f"**{comp_name}** (Success Score: {success_score}, Complexity: {complexity})\n"
+                            prompt += f"```python\n{code_snippet}...\n```\n\n"
+
+            prompt += "\n"
 
         # Add previous validation errors for retry
         if previous_validation and previous_validation.errors:
             prompt += "## Previous Validation Errors (FIX THESE)\n\n"
             for error in previous_validation.errors:
                 prompt += f"- ❌ {error}\n"
+            prompt += "\n"
+
+        # Phase 2: Add fix strategy prompt from learned patterns
+        if fix_strategy and error_patterns:
+            prompt += "## 🔧 PHASE 2: LEARNED FIX STRATEGY\n\n"
+            prompt += f"**Strategy:** `{fix_strategy}`\n\n"
+
+            # Get detailed fix instructions from strategy manager
+            fix_prompt = self.fix_strategy_manager.get_prompt_addition(
+                strategy_name=fix_strategy,
+                error_message="; ".join(previous_validation.errors) if previous_validation else None,
+                error_patterns=error_patterns
+            )
+            prompt += fix_prompt
+            prompt += "\n"
+
+            # Add severity information
+            severity = error_patterns.get('error_classification', {}).get('severity', 'medium')
+            is_auto_fixable = self.fix_strategy_manager.is_auto_fixable(fix_strategy)
+
+            prompt += f"**Severity:** {severity.upper()}\n"
+            prompt += f"**Auto-fixable:** {'Yes' if is_auto_fixable else 'No'}\n"
+            prompt += "\n"
+
+        # Phase 3: Add library compatibility notes
+        if library_analysis and not library_analysis.get("all_compatible", True):
+            prompt += "## 📚 PHASE 3: LIBRARY COMPATIBILITY NOTES\n\n"
+            prompt += "**Warning:** Some requested libraries may not be compatible with Airflow.\n\n"
+
+            for lib_info in library_analysis.get("libraries", []):
+                if not lib_info.get("compatible", True):
+                    lib_name = lib_info.get("name", "unknown")
+                    recommendation = lib_info.get("recommendation", "")
+                    prompt += f"**{lib_name}:** {recommendation}\n"
+
+                    # Add alternatives if available
+                    alternatives = lib_info.get("alternatives", [])
+                    if alternatives:
+                        prompt += f"  - Alternatives: {', '.join([a.get('alternative_library', a.get('alternative_approach', '')) for a in alternatives[:3]])}\n"
+
+            prompt += "\n**Please ensure you:**\n"
+            prompt += "1. Use compatible libraries or Airflow providers when available\n"
+            prompt += "2. For heavy ML libraries, consider using KubernetesPodOperator or API calls\n"
+            prompt += "3. Add proper error handling for optional imports\n"
+            prompt += "\n"
+
+            # Add library recommender suggestions
+            lib_prompt = self.library_recommender.generate_prompt_addition(
+                library_analysis,
+                category=spec.category
+            )
+            if lib_prompt:
+                prompt += lib_prompt
+                prompt += "\n"
+
+        # Phase 4: Add native fallback code for unavailable libraries
+        if fallback_suggestions and fallback_suggestions.get("has_fallbacks"):
+            prompt += "## 🔧 PHASE 4: NATIVE PYTHON FALLBACK CODE\n\n"
+            prompt += "**The following native Python implementations are available for unavailable libraries:**\n\n"
+
+            for suggestion in fallback_suggestions.get("suggestions", []):
+                library_name = suggestion.get("library", "")
+                available_fallbacks = suggestion.get("available_fallbacks", [])
+
+                if available_fallbacks:
+                    prompt += f"### {library_name} Fallbacks\n\n"
+
+                    # Get actual fallback code
+                    for fb in available_fallbacks[:3]:  # Limit to 3 operations per library
+                        operation = fb.get("operation", "")
+                        fallback_data = self.fallback_generator.get_fallback(library_name, operation)
+
+                        if fallback_data:
+                            fallback_code = fallback_data.get("fallback_code", "")
+                            if fallback_code:
+                                # Truncate if too long
+                                code_preview = fallback_code[:600] + "..." if len(fallback_code) > 600 else fallback_code
+                                prompt += f"**{operation}:**\n```python\n{code_preview}\n```\n\n"
+
+            prompt += "**Instructions:**\n"
+            prompt += "- Use these native implementations instead of importing unavailable libraries\n"
+            prompt += "- These use only Python standard library (no external dependencies)\n"
+            prompt += "- Adapt the fallback code to your specific use case\n"
             prompt += "\n"
 
         # Add generation guidelines

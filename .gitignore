@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Claude Code settings (local user settings)
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -57,6 +60,7 @@ component-generator/data/learning.db
 
 # Generated files (optional - remove if you want to track these)
 component-generator/generated_operators/
+component-generator/test-outputs/
 test_*.json
 test_*.yaml
 phase2_*.json

@@ -1,0 +1,78 @@
+#####################################
+# NVIDIA NeMo Question Answering Operator
+# Simplified version for testing
+#####################################
+name: "NeMoQuestionAnsweringOperator"
+display_name: "NVIDIA NeMo Question Answering Operator"
+description: |
+  Execute NVIDIA NeMo Question Answering for training or inference.
+  Supports extractive QA (BERT-based) and generative QA (T5/GPT-based models).
+
+category: "machine_learning"
+component_type: "operator"
+base_class: "BaseOperator"
+
+# Core inputs (simplified - only essential params)
+inputs:
+  - name: "mode"
+    type: "str"
+    required: false
+    default: "inference"
+    template_field: true
+    description: "Operation mode: train, inference, or evaluate"
+
+  - name: "model_type"
+    type: "str"
+    required: false
+    default: "extractive"
+    template_field: true
+    description: "QA model type: extractive, generative_s2s, or generative_gpt"
+
+  - name: "pretrained_model_name"
+    type: "str"
+    required: false
+    default: "bert-base-uncased"
+    template_field: true
+    description: "Pretrained model name from HuggingFace or NeMo"
+
+  - name: "dataset_file"
+    type: "str"
+    required: false
+    default: ""
+    template_field: true
+    description: "Path to dataset file in SQuAD format (for training/evaluation)"
+
+  - name: "output_dir"
+    type: "str"
+    required: false
+    default: "/tmp/nemo_qa_output"
+    template_field: true
+    description: "Output directory for results"
+
+# Runtime parameters (UI form fields)
+runtime_params:
+  - name: "execution_mode"
+    type: "string"
+    enum: ["train", "inference", "evaluate"]
+    default: "inference"
+    description: "Select the execution mode"
+
+  - name: "qa_model_type"
+    type: "string"
+    enum: ["extractive", "generative_s2s", "generative_gpt"]
+    default: "extractive"
+    description: "Select the QA model architecture"
+
+# Dependencies
+dependencies:
+  - "apache-airflow>=2.0.0"
+  - "nemo-toolkit[nlp]>=1.20.0"
+  - "torch>=2.0.0"
+
+# Requirements
+requirements:
+  - "Execute NVIDIA NeMo Question Answering for training or inference"
+  - "Support extractive (BERT-based) and generative (T5/GPT-based) QA models"
+  - "Handle dataset in SQuAD format for training and evaluation"
+  - "Save results to output directory"
+  - "Include proper error handling and logging"
