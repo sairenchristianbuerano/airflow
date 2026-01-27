@@ -35,6 +35,8 @@ from src.fix_strategies import FixStrategyManager
 from src.library_tracker import LibraryTracker
 from src.library_recommender import LibraryRecommender
 from src.native_fallback_generator import NativeFallbackGenerator
+from src.continuous_learning import ContinuousLearningManager
+from src.production_optimizer import ProductionOptimizer, CacheConfig, RateLimitConfig
 
 logger = structlog.get_logger()
 
@@ -93,6 +95,34 @@ class AirflowComponentGenerator(BaseCodeGenerator):
         # Phase 4: Native Python fallback generation
         fallback_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "fallback_code.db")
         self.fallback_generator = NativeFallbackGenerator(fallback_db_path)
+
+        # Phase 5: Continuous learning loop
+        continuous_learning_db_path = os.path.join(os.path.dirname(__file__), "..", "data", "continuous_learning.db")
+        self.continuous_learning = ContinuousLearningManager(
+            db_path=continuous_learning_db_path,
+            pattern_storage=self.pattern_storage,
+            pattern_extractor=self.pattern_extractor,
+            error_storage=self.error_storage,
+            error_extractor=self.error_extractor,
+            fix_strategy_manager=self.fix_strategy_manager,
+            library_tracker=self.library_tracker,
+            fallback_generator=self.fallback_generator
+        )
+
+        # Phase 6: Production optimization
+        self.optimizer = ProductionOptimizer(
+            cache_config=CacheConfig(
+                max_size=1000,  # Cache up to 1000 pattern sets
+                ttl_seconds=3600,  # 1 hour TTL
+                enabled=True
+            ),
+            rate_limit_config=RateLimitConfig(
+                requests_per_minute=60,
+                requests_per_hour=1000,
+                burst_limit=10,
+                enabled=True
+            )
+        )
 
         self.logger = logger.bind(component="airflow_generator")
 
@@ -507,6 +537,61 @@ class AirflowComponentGenerator(BaseCodeGenerator):
             except Exception as e:
                 self.logger.warning("Failed to log fallback usage", error=str(e))
 
+        # 7.8. Phase 5: Continuous Learning - Learn from successful generation
+        try:
+            self.logger.info("🧠 Phase 5: Triggering continuous learning...")
+
+            # Prepare metadata for learning
+            learning_metadata = {
+                "attempts": attempts,
+                "prompt_tokens": total_prompt_tokens,
+                "completion_tokens": total_completion_tokens,
+                "time_seconds": total_time,
+                "first_attempt_success": first_attempt_success,
+                "patterns_used": len(similar_patterns) if similar_patterns else 0,
+                "patterns_used_names": [p.get("pattern_name", "") for p in similar_patterns[0].get("code_patterns", [])] if similar_patterns else [],
+                "errors_fixed": attempts - 1 if attempts > 1 else 0,
+                "fallbacks_used": fallback_suggestions.get("suggestions", []) if fallback_suggestions else [],
+                "libraries": spec.dependencies if spec.dependencies else [],
+                "fix_strategies": [last_fix_strategy] if last_fix_strategy else []
+            }
+
+            # Convert validation_result to dict for learning
+            validation_dict = {
+                "is_valid": validation_result.is_valid(),
+                "errors": validation_result.errors if validation_result else [],
+                "warnings": validation_result.warnings if validation_result else []
+            }
+
+            # Call the continuous learning manager
+            learning_result = self.continuous_learning.learn_from_generation(
+                component_name=spec.name,
+                component_type=spec.component_type,
+                category=spec.category,
+                code=code,
+                spec=spec.dict(),
+                validation_result=validation_dict,
+                metadata=learning_metadata
+            )
+
+            self.logger.info(
+                "✅ Continuous learning completed",
+                patterns_learned=learning_result.get("patterns_learned", 0),
+                confidence_updates=learning_result.get("confidence_updates", 0),
+                suggestions=learning_result.get("suggestions_generated", 0)
+            )
+
+            # Run scheduled tasks periodically (every generation)
+            scheduled_results = self.continuous_learning.run_scheduled_tasks()
+            if scheduled_results:
+                self.logger.info(
+                    "📅 Scheduled tasks executed",
+                    tasks_run=len(scheduled_results)
+                )
+
+        except Exception as e:
+            self.logger.warning("Failed to complete continuous learning", error=str(e))
+
         # 8. Create final component
         component = GeneratedComponent(
             name=spec.name,
@@ -532,6 +617,22 @@ class AirflowComponentGenerator(BaseCodeGenerator):
             tokens=total_prompt_tokens + total_completion_tokens
         )
 
+        # 9. Phase 6: Record performance metrics
+        try:
+            # Estimate cost (Claude pricing: ~$3/1M input, ~$15/1M output for Sonnet)
+            estimated_cost = (total_prompt_tokens * 0.000003) + (total_completion_tokens * 0.000015)
+
+            self.optimizer.record_generation(
+                success=True,
+                time_seconds=total_time,
+                tokens=total_prompt_tokens + total_completion_tokens,
+                retries=attempts - 1,
+                cost_usd=estimated_cost
+            )
+            self.logger.info("📊 Performance metrics recorded")
+        except Exception as e:
+            self.logger.warning("Failed to record performance metrics", error=str(e))
+
         return component
 
     async def _retrieve_similar_patterns(self, spec: OperatorSpec) -> List[Dict]:
@@ -540,6 +641,8 @@ class AirflowComponentGenerator(BaseCodeGenerator):
 
         Uses the PatternStorage to find high-confidence patterns from successful
         component generations that match the category and component type.
+
+        Phase 6: Uses caching layer for improved performance.
         """
         try:
             self.logger.info(
@@ -547,6 +650,24 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                 category=spec.category,
                 component_type=spec.component_type
             )
+
+            # Phase 6: Check cache first
+            cache_key = self.optimizer.cache_key(
+                spec.category,
+                spec.component_type,
+                min_confidence=0.7,
+                limit=5
+            )
+            cached_result = self.optimizer.cache.get(cache_key)
+
+            if cached_result is not None:
+                self.logger.info(
+                    "📦 Cache HIT - Using cached patterns",
+                    category=spec.category
+                )
+                return cached_result
+
+            self.logger.info("📦 Cache MISS - Fetching from database")
 
             # Get best patterns for this category/type
             patterns = self.pattern_storage.get_best_patterns(
@@ -576,7 +697,12 @@ class AirflowComponentGenerator(BaseCodeGenerator):
                 "similar_components": similar_components
             }
 
-            return [formatted_patterns] if patterns or similar_components else []
+            result = [formatted_patterns] if patterns or similar_components else []
+
+            # Phase 6: Cache the result
+            self.optimizer.cache.set(cache_key, result)
+
+            return result
 
         except Exception as e:
             self.logger.warning("Error retrieving patterns from local database", error=str(e))

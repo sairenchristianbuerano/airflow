@@ -409,6 +409,365 @@ async def get_error_analytics():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Phase 5: Continuous Learning Endpoints
+
+@app.get("/api/airflow/component-generator/analytics/learning")
+async def get_learning_statistics():
+    """
+    Get Phase 5 continuous learning statistics
+
+    Returns overall learning statistics including:
+    - Total generations tracked
+    - Success rate
+    - Patterns tracked with average confidence
+    - Strategies tracked
+    - Pending improvement suggestions
+    - Categories covered
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        stats = generator.continuous_learning.get_statistics()
+        return {
+            "status": "success",
+            "learning_statistics": stats
+        }
+    except Exception as e:
+        logger.error("Failed to get learning statistics", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/analytics/learning/metrics")
+async def get_learning_metrics(category: str = None):
+    """
+    Get learning metrics by category
+
+    Query params:
+    - category (optional): Filter by category
+
+    Returns metrics for each category including:
+    - Total/successful/failed generations
+    - Average attempts, tokens, time
+    - First-attempt success rate
+    - Pattern match rate
+    - Error reduction rate
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        metrics = generator.continuous_learning.get_learning_metrics(category=category)
+        return {
+            "status": "success",
+            "metrics": [
+                {
+                    "category": m.category,
+                    "total_generations": m.total_generations,
+                    "successful_generations": m.successful_generations,
+                    "failed_generations": m.failed_generations,
+                    "avg_attempts": round(m.avg_attempts, 2),
+                    "avg_tokens": m.avg_tokens,
+                    "avg_time_seconds": round(m.avg_time_seconds, 2),
+                    "first_attempt_success_rate": round(m.first_attempt_success_rate * 100, 1),
+                    "pattern_match_rate": round(m.pattern_match_rate * 100, 1),
+                    "error_reduction_rate": round(m.error_reduction_rate * 100, 1),
+                    "last_updated": m.last_updated
+                }
+                for m in metrics
+            ]
+        }
+    except Exception as e:
+        logger.error("Failed to get learning metrics", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/analytics/suggestions")
+async def get_improvement_suggestions(category: str = None, status: str = "pending"):
+    """
+    Get improvement suggestions from the continuous learning system
+
+    Query params:
+    - category (optional): Filter by category
+    - status: Filter by status (pending, in_progress, resolved). Default: pending
+
+    Returns suggestions for improving the generator based on:
+    - Recurring error patterns
+    - Low success rate categories
+    - Pattern validation issues
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        suggestions = generator.continuous_learning.get_improvement_suggestions(
+            category=category,
+            status=status
+        )
+        return {
+            "status": "success",
+            "count": len(suggestions),
+            "suggestions": suggestions
+        }
+    except Exception as e:
+        logger.error("Failed to get suggestions", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/analytics/strategies")
+async def get_strategy_effectiveness(error_type: str = None):
+    """
+    Get fix strategy effectiveness data
+
+    Query params:
+    - error_type (optional): Filter by error type
+
+    Returns effectiveness data for fix strategies including:
+    - Strategy name and error type
+    - Effectiveness score
+    - Usage count, success/failure counts
+    - Average attempts to fix
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        strategies = generator.continuous_learning.get_strategy_effectiveness(
+            error_type=error_type
+        )
+        return {
+            "status": "success",
+            "count": len(strategies),
+            "strategies": strategies
+        }
+    except Exception as e:
+        logger.error("Failed to get strategy effectiveness", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/airflow/component-generator/analytics/learning/decay")
+async def trigger_confidence_decay():
+    """
+    Manually trigger confidence decay for patterns
+
+    Applies time-based confidence decay to patterns that haven't
+    been used recently, encouraging the system to try newer patterns.
+
+    Returns counts of patterns decayed, flagged for review, and removed.
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        result = generator.continuous_learning.apply_confidence_decay()
+        return {
+            "status": "success",
+            "result": result
+        }
+    except Exception as e:
+        logger.error("Failed to apply confidence decay", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/airflow/component-generator/analytics/learning/validate")
+async def trigger_pattern_validation():
+    """
+    Manually trigger pattern validation
+
+    Validates stored patterns and flags problematic ones based on
+    success rate and confidence score.
+
+    Returns validation results with recommendations.
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        result = generator.continuous_learning.validate_patterns()
+        return {
+            "status": "success",
+            "result": result
+        }
+    except Exception as e:
+        logger.error("Failed to validate patterns", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/airflow/component-generator/analytics/learning/tasks")
+async def run_scheduled_tasks():
+    """
+    Manually run scheduled maintenance tasks
+
+    Executes any due scheduled tasks including:
+    - confidence_decay (daily)
+    - pattern_validation (weekly)
+    - metrics_aggregation (hourly)
+    - suggestion_generation (daily)
+    - cleanup_old_data (monthly)
+
+    Returns results for each task executed.
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        result = generator.continuous_learning.run_scheduled_tasks()
+        return {
+            "status": "success",
+            "tasks_executed": len(result),
+            "results": result
+        }
+    except Exception as e:
+        logger.error("Failed to run scheduled tasks", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Phase 6: Production Optimization Endpoints
+
+@app.get("/api/airflow/component-generator/dashboard")
+async def get_dashboard():
+    """
+    Get comprehensive dashboard data for monitoring.
+
+    Returns aggregated data including:
+    - System health status
+    - Performance metrics
+    - Cache statistics
+    - Rate limiting stats
+    - Active alerts
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        dashboard_data = generator.optimizer.get_dashboard()
+        return {
+            "status": "success",
+            "dashboard": dashboard_data
+        }
+    except Exception as e:
+        logger.error("Failed to get dashboard data", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/health/detailed")
+async def get_detailed_health():
+    """
+    Get detailed health status with component checks.
+
+    Returns:
+    - Overall health status (healthy/degraded)
+    - Individual component status
+    - Active alerts with details
+    - System resource usage
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        health = generator.optimizer.get_health()
+        return {
+            "status": health.status,
+            "healthy": health.healthy,
+            "components": health.components,
+            "alerts": health.alerts,
+            "metrics": health.metrics,
+            "last_check": health.last_check
+        }
+    except Exception as e:
+        logger.error("Failed to get health status", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/optimizer/stats")
+async def get_optimizer_statistics():
+    """
+    Get production optimizer statistics.
+
+    Returns comprehensive stats including:
+    - Cache hit/miss rates
+    - Rate limiter stats
+    - Performance metrics
+    - Current health status
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        stats = generator.optimizer.get_statistics()
+        return {
+            "status": "success",
+            "optimizer_statistics": stats
+        }
+    except Exception as e:
+        logger.error("Failed to get optimizer stats", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/airflow/component-generator/cache/invalidate")
+async def invalidate_cache(category: str = None):
+    """
+    Invalidate cached patterns.
+
+    Query params:
+    - category (optional): If provided, invalidates only that category.
+                          If not provided, clears entire cache.
+
+    Returns count of entries cleared.
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        cleared = generator.optimizer.invalidate_cache(category=category)
+        return {
+            "status": "success",
+            "entries_cleared": cleared,
+            "category": category or "all"
+        }
+    except Exception as e:
+        logger.error("Failed to invalidate cache", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/airflow/component-generator/performance")
+async def get_performance_metrics():
+    """
+    Get real-time performance metrics.
+
+    Returns:
+    - Total generations count
+    - Success/failure rates
+    - Average generation time
+    - Token usage stats
+    - Cost tracking
+    - Throughput (generations/hour)
+    """
+    if not generator:
+        raise HTTPException(status_code=503, detail="Generator not initialized")
+
+    try:
+        metrics = generator.optimizer.metrics.get_metrics()
+        return {
+            "status": "success",
+            "performance": {
+                "total_generations": metrics["total_generations"],
+                "successful": metrics["successful_generations"],
+                "failed": metrics["failed_generations"],
+                "success_rate_percent": round(metrics["success_rate"] * 100, 1),
+                "avg_generation_time_seconds": round(metrics["avg_generation_time"], 2),
+                "avg_tokens_per_generation": int(metrics["avg_tokens"]),
+                "avg_retries": round(metrics["avg_retries"], 2),
+                "total_cost_usd": round(metrics["total_cost_usd"], 4),
+                "uptime_hours": round(metrics["uptime_seconds"] / 3600, 2),
+                "throughput_per_hour": round(metrics["generations_per_hour"], 1)
+            }
+        }
+    except Exception as e:
+        logger.error("Failed to get performance metrics", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Run with uvicorn
 if __name__ == "__main__":
     import uvicorn

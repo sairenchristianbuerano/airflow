@@ -52,13 +52,41 @@ class TestFileGenerator:
         # Check if component has template fields
         has_template_fields = any(inp.get('template_field', False) for inp in inputs)
 
-        template = f'''"""
+        snake_name = self._to_snake_case(component_name)
+
+        template = f'''# ============================================================================
+# PYTEST TEST FILE - DO NOT PLACE IN AIRFLOW DAGS FOLDER
+# ============================================================================
+# This file is for running with pytest, NOT for Airflow execution.
+# Place this file in: tests/ folder or any location outside dags/
+#
+# To run tests:
+#   pytest test_{snake_name}.py -v
+#
+# Required packages:
+#   pip install pytest pytest-mock
+# ============================================================================
+
+"""
 Tests for {component_name}
 
 Auto-generated test file for Airflow operator with comprehensive mocking.
+
+WARNING: This is a pytest test file. Do NOT place in Airflow dags folder.
+         Place in a 'tests/' directory instead.
 """
 
-import pytest
+# Prevent Airflow from loading this as a DAG
+# This file should only be run with pytest
+try:
+    import pytest
+except ImportError:
+    raise ImportError(
+        "pytest is required to run this test file. "
+        "Install with: pip install pytest pytest-mock\\n"
+        "NOTE: This file should NOT be in the Airflow dags folder."
+    )
+
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from airflow.models import DAG, TaskInstance
@@ -66,7 +94,17 @@ from airflow.utils import timezone
 from airflow.utils.state import State
 
 # Import the operator being tested
-from {self._to_snake_case(component_name)} import {component_name}
+# Adjust the import path based on where you placed the operator file
+try:
+    from {snake_name} import {component_name}
+except ImportError:
+    try:
+        from custom_operators.{snake_name} import {component_name}
+    except ImportError:
+        raise ImportError(
+            f"Could not import {component_name}. "
+            f"Ensure '{snake_name}.py' is in the Python path."
+        )
 
 
 @pytest.fixture
@@ -295,14 +333,40 @@ class Test{component_name}:
 
         inputs = spec.get('inputs', [])
         test_params = self._generate_test_params(inputs)
+        snake_name = self._to_snake_case(component_name)
 
-        template = f'''"""
+        template = f'''# ============================================================================
+# PYTEST TEST FILE - DO NOT PLACE IN AIRFLOW DAGS FOLDER
+# ============================================================================
+# This file is for running with pytest, NOT for Airflow execution.
+# Place this file in: tests/ folder or any location outside dags/
+#
+# To run tests:
+#   pytest test_{snake_name}.py -v
+#
+# Required packages:
+#   pip install pytest pytest-mock
+# ============================================================================
+
+"""
 Tests for {component_name}
 
 Auto-generated test file for Airflow sensor with comprehensive mocking.
+
+WARNING: This is a pytest test file. Do NOT place in Airflow dags folder.
+         Place in a 'tests/' directory instead.
 """
 
-import pytest
+# Prevent Airflow from loading this as a DAG
+try:
+    import pytest
+except ImportError:
+    raise ImportError(
+        "pytest is required to run this test file. "
+        "Install with: pip install pytest pytest-mock\\n"
+        "NOTE: This file should NOT be in the Airflow dags folder."
+    )
+
 from datetime import datetime
 from unittest.mock import MagicMock
 from airflow.models import DAG, TaskInstance
@@ -310,7 +374,16 @@ from airflow.utils import timezone
 from airflow.utils.state import State
 
 # Import the sensor being tested
-from {self._to_snake_case(component_name)} import {component_name}
+try:
+    from {snake_name} import {component_name}
+except ImportError:
+    try:
+        from custom_operators.{snake_name} import {component_name}
+    except ImportError:
+        raise ImportError(
+            f"Could not import {component_name}. "
+            f"Ensure '{snake_name}.py' is in the Python path."
+        )
 
 
 @pytest.fixture
@@ -501,17 +574,53 @@ class Test{component_name}:
     def _generate_hook_test(self, component_name: str, spec: Dict[str, Any]) -> str:
         """Generate test file for a hook"""
 
-        template = f'''"""
+        snake_name = self._to_snake_case(component_name)
+
+        template = f'''# ============================================================================
+# PYTEST TEST FILE - DO NOT PLACE IN AIRFLOW DAGS FOLDER
+# ============================================================================
+# This file is for running with pytest, NOT for Airflow execution.
+# Place this file in: tests/ folder or any location outside dags/
+#
+# To run tests:
+#   pytest test_{snake_name}.py -v
+#
+# Required packages:
+#   pip install pytest pytest-mock
+# ============================================================================
+
+"""
 Tests for {component_name}
 
 Auto-generated test file for Airflow hook.
+
+WARNING: This is a pytest test file. Do NOT place in Airflow dags folder.
+         Place in a 'tests/' directory instead.
 """
 
-import pytest
+# Prevent Airflow from loading this as a DAG
+try:
+    import pytest
+except ImportError:
+    raise ImportError(
+        "pytest is required to run this test file. "
+        "Install with: pip install pytest pytest-mock\\n"
+        "NOTE: This file should NOT be in the Airflow dags folder."
+    )
+
 from airflow.models import Connection
 
 # Import the hook being tested
-from {self._to_snake_case(component_name)} import {component_name}
+try:
+    from {snake_name} import {component_name}
+except ImportError:
+    try:
+        from custom_operators.{snake_name} import {component_name}
+    except ImportError:
+        raise ImportError(
+            f"Could not import {component_name}. "
+            f"Ensure '{snake_name}.py' is in the Python path."
+        )
 
 
 class Test{component_name}:
@@ -572,16 +681,51 @@ class Test{component_name}:
     def _generate_generic_test(self, component_name: str, spec: Dict[str, Any]) -> str:
         """Generate generic test file"""
 
-        template = f'''"""
+        snake_name = self._to_snake_case(component_name)
+
+        template = f'''# ============================================================================
+# PYTEST TEST FILE - DO NOT PLACE IN AIRFLOW DAGS FOLDER
+# ============================================================================
+# This file is for running with pytest, NOT for Airflow execution.
+# Place this file in: tests/ folder or any location outside dags/
+#
+# To run tests:
+#   pytest test_{snake_name}.py -v
+#
+# Required packages:
+#   pip install pytest
+# ============================================================================
+
+"""
 Tests for {component_name}
 
 Auto-generated test file.
+
+WARNING: This is a pytest test file. Do NOT place in Airflow dags folder.
+         Place in a 'tests/' directory instead.
 """
 
-import pytest
+# Prevent Airflow from loading this as a DAG
+try:
+    import pytest
+except ImportError:
+    raise ImportError(
+        "pytest is required to run this test file. "
+        "Install with: pip install pytest\\n"
+        "NOTE: This file should NOT be in the Airflow dags folder."
+    )
 
 # Import the component being tested
-from {self._to_snake_case(component_name)} import {component_name}
+try:
+    from {snake_name} import {component_name}
+except ImportError:
+    try:
+        from custom_operators.{snake_name} import {component_name}
+    except ImportError:
+        raise ImportError(
+            f"Could not import {component_name}. "
+            f"Ensure '{snake_name}.py' is in the Python path."
+        )
 
 
 class Test{component_name}:
@@ -694,18 +838,41 @@ Test DAG for {component_name}
 
 This DAG demonstrates the custom {component_name} with runtime parameter support.
 Users can input values via the Airflow UI when triggering this DAG.
+
+IMPORTANT: Both this file AND {snake_name}.py must be in the same folder (e.g., dags/).
 """
 
 from airflow import DAG
-from airflow.models import Param
 from datetime import datetime, timedelta
-import sys
-import os
 
-# Add current directory to Python path to import our custom operator
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import Param with Airflow 3.x compatibility
+try:
+    from airflow.sdk import Param  # Airflow 3.x
+except ImportError:
+    from airflow.models.param import Param  # Airflow 2.x fallback
 
-from {snake_name} import {component_name}
+# ============================================================================
+# OPERATOR IMPORT - The operator file must be in the same folder as this DAG
+# ============================================================================
+# Option 1: If operator is in the same folder as this DAG file
+try:
+    from {snake_name} import {component_name}
+except ImportError:
+    # Option 2: Try importing from custom_operators subfolder
+    try:
+        from custom_operators.{snake_name} import {component_name}
+    except ImportError:
+        # Option 3: Try importing from plugins
+        try:
+            from plugins.{snake_name} import {component_name}
+        except ImportError:
+            raise ImportError(
+                f"Could not import {component_name}. "
+                f"Please ensure '{snake_name}.py' is in one of these locations:\\n"
+                f"  1. Same folder as this DAG file\\n"
+                f"  2. $AIRFLOW_HOME/dags/custom_operators/\\n"
+                f"  3. $AIRFLOW_HOME/plugins/"
+            )
 
 # Default arguments for the DAG
 default_args = {{
@@ -737,25 +904,48 @@ with DAG(
 {task_params}
     )
 
-# 🎯 Testing Instructions:
+# ============================================================================
+# SETUP INSTRUCTIONS
+# ============================================================================
 #
-# Via UI (with custom inputs):
+# 1. Copy BOTH files to your Airflow dags folder:
+#    cp {snake_name}.py $AIRFLOW_HOME/dags/
+#    cp test_dag_{snake_name}.py $AIRFLOW_HOME/dags/
+#
+# 2. Or create a custom_operators subfolder:
+#    mkdir -p $AIRFLOW_HOME/dags/custom_operators
+#    cp {snake_name}.py $AIRFLOW_HOME/dags/custom_operators/
+#    touch $AIRFLOW_HOME/dags/custom_operators/__init__.py
+#    cp test_dag_{snake_name}.py $AIRFLOW_HOME/dags/
+#
+# TESTING:
+#
+# Via UI:
 #   1. Access http://localhost:8080
 #   2. Find DAG: test_{snake_name}
 #   3. Click "Trigger DAG" (play button)
 #   4. Fill in the parameter form with your values
 #   5. Click "Trigger" to run with those inputs
-#   6. View task logs to see results
 #
 # Via CLI:
-#   airflow dags test test_{snake_name} $(date +%Y-%m-%d)
+#   airflow dags test test_{snake_name} 2024-01-01
 '''
         return template
 
     def _generate_params_code(self, runtime_params: list) -> str:
-        """Generate Airflow Params dictionary code"""
+        """Generate Airflow Params dictionary code
+
+        Intelligently selects default values:
+        - For operation_type with enum, prefers options that don't require file inputs
+        - Prefers 'nlp' or 'query' over 'asr' or file-based operations
+        """
         if not runtime_params:
             return "        # No runtime parameters defined"
+
+        # Keywords that suggest file-less operations (prefer these as defaults)
+        safe_operation_keywords = ['nlp', 'query', 'text', 'analyze', 'process', 'inference']
+        # Keywords that suggest file-based operations (avoid as defaults)
+        file_operation_keywords = ['asr', 'tts', 'transcribe', 'audio', 'video', 'file', 'upload']
 
         param_lines = []
         for param in runtime_params:
@@ -764,6 +954,18 @@ with DAG(
             description = param.get('description', '')
             default = param.get('default', '')
             enum_values = param.get('enum', [])
+
+            # Smart default selection for operation_type-like parameters
+            if enum_values and ('operation' in name.lower() or 'type' in name.lower() or 'mode' in name.lower()):
+                # Try to find a safe default that doesn't require file inputs
+                safe_default = None
+                for enum_val in enum_values:
+                    enum_lower = str(enum_val).lower()
+                    if any(kw in enum_lower for kw in safe_operation_keywords):
+                        safe_default = enum_val
+                        break
+                if safe_default:
+                    default = safe_default
 
             # Use JSON schema types for Airflow Param (not Python types)
             # Airflow expects: 'string', 'number', 'boolean', 'array', 'object', 'null', 'integer'
@@ -803,12 +1005,21 @@ with DAG(
         return "\n".join(param_lines)
 
     def _generate_dag_task_params(self, inputs: list, runtime_params: list) -> str:
-        """Generate task parameter assignments using runtime params"""
+        """Generate task parameter assignments using runtime params
+
+        Intelligently selects defaults that are least likely to cause errors:
+        - For operation_type-like params, prefers options that don't require files
+        - Adds text_input-like params to support non-file operations
+        """
         if not inputs:
             return "        # No parameters required"
 
         # Create a set of runtime param names for quick lookup
         runtime_param_names = {p.get('name') for p in (runtime_params or [])}
+
+        # Find inputs that are commonly needed for non-file operations
+        text_inputs = [inp for inp in inputs if 'text' in inp.get('name', '').lower()
+                       and inp.get('type', '') == 'str']
 
         param_lines = []
         for inp in inputs:
@@ -819,6 +1030,9 @@ with DAG(
             if name in runtime_param_names:
                 # Use Jinja template to pull from params
                 param_lines.append(f'        {name}="{{{{ params.{name} }}}}",')
+            # Also add text_input-like params even if not required (for NLP/TTS operations)
+            elif 'text_input' in name.lower() or 'text' == name.lower():
+                param_lines.append(f'        {name}="{{{{ params.{name} if params.{name} is defined else \'Sample text for testing\' }}}}",')
             elif required:
                 # Use default value or sample value
                 if default is not None:

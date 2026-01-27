@@ -1,0 +1,88 @@
+name: NvidiaRivaOperator
+display_name: "NVIDIA Riva Speech AI Operator"
+description: "Operator for NVIDIA Riva conversational AI - supports speech-to-text (ASR), text-to-speech (TTS), and NLP inference using Riva API"
+category: ml
+component_type: operator
+
+inputs:
+  - name: riva_server_url
+    type: str
+    description: "NVIDIA Riva server gRPC endpoint (e.g., localhost:50051)"
+    required: true
+    template_field: true
+  - name: operation_type
+    type: str
+    description: "Type of Riva operation: asr (speech-to-text), tts (text-to-speech), or nlp"
+    required: true
+    default: "asr"
+  - name: audio_file_path
+    type: str
+    description: "Path to audio file for ASR transcription (WAV format recommended)"
+    required: false
+    template_field: true
+  - name: text_input
+    type: str
+    description: "Text input for TTS or NLP operations"
+    required: false
+    template_field: true
+  - name: language_code
+    type: str
+    description: "Language code for processing (e.g., en-US)"
+    required: false
+    default: "en-US"
+  - name: sample_rate
+    type: int
+    description: "Audio sample rate in Hz"
+    required: false
+    default: 16000
+  - name: output_path
+    type: str
+    description: "Output path for TTS audio file"
+    required: false
+    template_field: true
+  - name: model_name
+    type: str
+    description: "Specific Riva model to use (optional)"
+    required: false
+    template_field: true
+  - name: ssl_cert_path
+    type: str
+    description: "Path to SSL certificate for secure connections"
+    required: false
+
+outputs:
+  - name: transcription
+    type: str
+    description: "Transcribed text from ASR operation"
+  - name: audio_output_path
+    type: str
+    description: "Path to generated audio file from TTS"
+  - name: nlp_result
+    type: dict
+    description: "NLP analysis results"
+  - name: confidence_score
+    type: float
+    description: "Confidence score of the operation"
+  - name: processing_time_ms
+    type: float
+    description: "Processing time in milliseconds"
+
+dependencies:
+  - "grpcio>=1.50.0"
+  - "protobuf>=4.0.0"
+
+base_class: "BaseOperator"
+template_fields: ["riva_server_url", "audio_file_path", "text_input", "output_path", "model_name"]
+ui_color: "#76B900"
+ui_fgcolor: "#FFFFFF"
+
+runtime_params:
+  - name: operation_type
+    type: string
+    enum: ["asr", "tts", "nlp"]
+    default: "asr"
+    description: "Select the Riva operation type"
+  - name: language_code
+    type: string
+    default: "en-US"
+    description: "Language code for processing"
