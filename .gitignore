@@ -60,8 +60,9 @@ component-generator/data/learning.db
 
 # Generated files (optional - remove if you want to track these)
 # component-generator/generated_operators/
-# component-generator/test-outputs/
+component-generator/test-outputs/
 test_*.json
+nemo_*.json
 test_*.yaml
 phase2_*.json
 
