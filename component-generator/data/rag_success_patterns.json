@@ -30,9 +30,7 @@
       "subcategory": "speech-ai",
       "framework": "nvidia_riva",
       "component_type": "operator",
-      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport grpc\nimport json\nimport wave\nimport os\nfrom pathlib import Path\n\nclass NvidiaRivaOperator(BaseOperator):\n    \"\"\"\n    Operator for NVIDIA Riva conversational AI operations.\n\n    Supports speech-to-text (ASR), text-to-speech (TTS), and NLP inference\n    using NVIDIA Riva gRPC API.\n\n    :param riva_server_url: NVIDIA Riva server gRPC endpoint (e.g., localhost:50051)\n    :type riva_server_url: str\n    :param operation_type: Type of Riva operation: asr, tts, or nlp\n    :type operation_type: str\n    :param audio_file_path: Path to audio file for ASR transcription (WAV format recommended)\n    :type audio_file_path: Optional[str]\n    :param text_input: Text input for TTS or NLP operations\n    :type text_input: Optional[str]\n    :param language_code: Language code for processing (e.g., en-US)\n    :type language_code: Optional[str]\n    :param sample_rate: Audio sample rate in Hz\n    :type sample_rate: Optional[int]\n    :param output_path: Output path for TTS audio file\n    :type output_path: Optional[str]\n    :param model_name: Specific Riva model to use\n    :type model_name: Optional[str]\n    :param ssl_cert_path: Path to SSL certificate for secure connections\n    :type ssl_cert_path: Optional[str]\n    \"\"\"\n\n    template_fields: Sequence[str] = [\n        'operation_type', 'language_code', 'text_input', 'audio_file_path',\n        'output_path', 'model_name'\n    ]\n    ui_color: str = \"#76B900\"\n\n    def __init__(\n        self,\n        riva_server_url: str,\n        operation_type: str,\n        audio_file_path: Optional[str] = None,\n        text_input: Optional[str] = None,\n        language_code: Optional[str] = \"en-US\",\n        sample_rate: Optional[int] = 16000,\n        output_path: Optional[str] = None,\n        model_name: Optional[str] = None,\n        ssl_cert_path: Optional[str] = None,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n\n        if not riva_server_url:\n            raise AirflowException(\"riva_server_url is required\")\n\n        # Validate operation_type if not a template\n        valid_operations = ['asr', 'tts', 'nlp']\n        if '{{' not in str(operation_type) and operation_type not in valid_operations:\n            raise AirflowException(f\"operation_type must be one of {valid_operations}\")\n\n        # Validate sample_rate\n        if sample_rate is not None and sample_rate <= 0:\n            raise AirflowException(\"sample_rate must be a positive integer\")\n\n        self.riva_server_url = riva_server_url\n        self.operation_type = operation_type\n        self.audio_file_path = audio_file_path\n        self.text_input = text_input\n        self.language_code = language_code\n        self.sample_rate = sample_rate\n        self.output_path = output_path\n        self.model_name = model_name\n        self.ssl_cert_path = ssl_cert_path\n\n        self.log.info(f\"Initialized NvidiaRivaOperator for {operation_type} operation\")\n\n    def execute(self, context: Dict[str, Any]) -> Any:\n        self.log.info(f\"Executing NvidiaRivaOperator {self.operation_type} operation\")\n\n        # Validate template fields after rendering\n        valid_operations = ['asr', 'tts', 'nlp']\n        if self.operation_type not in valid_operations:\n            raise AirflowException(f\"operation_type must be one of {valid_operations}\")\n\n        try:\n            channel = self._create_grpc_channel()\n\n            if self.operation_type == 'asr':\n                result = self._execute_asr(channel)\n            elif self.operation_type == 'tts':\n                result = self._execute_tts(channel, context)\n            elif self.operation_type == 'nlp':\n                result = self._execute_nlp(channel)\n            else:\n                raise AirflowException(f\"Unsupported operation type: {self.operation_type}\")\n\n            channel.close()\n            self.log.info(f\"Successfully completed {self.operation_type} operation\")\n            return result\n\n        except grpc.RpcError as e:\n            self.log.error(f\"gRPC error during {self.operation_type} operation: {e}\")\n            raise AirflowException(f\"Riva gRPC error: {e}\")\n        except Exception as e:\n            self.log.error(f\"Error during {self.operation_type} operation: {e}\")\n            raise AirflowException(f\"Riva operation failed: {e}\")",
-      "test_code": "# ============================================================================\n# PYTEST TEST FILE - DO NOT PLACE IN AIRFLOW DAGS FOLDER\n# ============================================================================\nimport pytest\nfrom datetime import datetime\nfrom unittest.mock import MagicMock, patch\nfrom airflow.models import DAG, TaskInstance\nfrom airflow.utils import timezone\nfrom airflow.utils.state import State\n\ntry:\n    from nvidia_riva_operator import NvidiaRivaOperator\nexcept ImportError:\n    try:\n        from custom_operators.nvidia_riva_operator import NvidiaRivaOperator\n    except ImportError:\n        raise ImportError(\n            \"Could not import NvidiaRivaOperator. \"\n            \"Ensure 'nvidia_riva_operator.py' is in the Python path.\"\n        )\n\n@pytest.fixture\ndef dag():\n    return DAG(\n        dag_id='test_dag',\n        start_date=timezone.datetime(2024, 1, 1),\n        default_args={'owner': 'airflow'}\n    )\n\nclass TestNvidiaRivaOperator:\n    def test_operator_initialization(self, dag):\n        operator = NvidiaRivaOperator(\n            task_id='test_task',\n            dag=dag,\n            riva_server_url='localhost:50051',\n            operation_type='nlp',\n            text_input='Test message for NLP analysis',\n        )\n        assert operator.task_id == 'test_task'\n        assert operator.operation_type == 'nlp'\n\n    def test_template_fields(self, dag):\n        operator = NvidiaRivaOperator(\n            task_id='test_task',\n            dag=dag,\n            riva_server_url='localhost:50051',\n            operation_type='nlp',\n            text_input='Test message',\n        )\n        assert 'operation_type' in operator.template_fields\n        assert 'text_input' in operator.template_fields\n\n    def test_ui_color(self, dag):\n        operator = NvidiaRivaOperator(\n            task_id='test_task',\n            dag=dag,\n            riva_server_url='localhost:50051',\n            operation_type='nlp',\n            text_input='Test message',\n        )\n        assert operator.ui_color == '#76B900'",
-      "dag_code": "\"\"\"\nTest DAG for NvidiaRivaOperator\n\nOperator for NVIDIA Riva conversational AI - supports speech-to-text (ASR), \ntext-to-speech (TTS), and NLP inference using Riva API\n\"\"\"\n\nfrom airflow import DAG\nfrom datetime import datetime, timedelta\n\n# Import Param with Airflow 3.x compatibility\ntry:\n    from airflow.sdk import Param  # Airflow 3.x\nexcept ImportError:\n    from airflow.models.param import Param  # Airflow 2.x fallback\n\n# Fallback import paths for operator\ntry:\n    from nvidia_riva_operator import NvidiaRivaOperator\nexcept ImportError:\n    try:\n        from custom_operators.nvidia_riva_operator import NvidiaRivaOperator\n    except ImportError:\n        try:\n            from plugins.nvidia_riva_operator import NvidiaRivaOperator\n        except ImportError:\n            raise ImportError(\"Could not import NvidiaRivaOperator\")\n\ndefault_args = {\n    'owner': 'airflow',\n    'depends_on_past': False,\n    'start_date': datetime(2024, 1, 1),\n    'email_on_failure': False,\n    'email_on_retry': False,\n    'retries': 1,\n    'retry_delay': timedelta(minutes=5),\n}\n\nwith DAG(\n    dag_id='test_nvidia_riva_operator',\n    default_args=default_args,\n    description='Test DAG for NVIDIA Riva Speech AI Operator',\n    schedule=None,\n    catchup=False,\n    tags=['test', 'custom-component', 'operator', 'nvidia', 'riva', 'speech-ai'],\n    params={\n        'operation_type': Param(\n            default='nlp',\n            type='string',\n            description='Select the Riva operation type (nlp recommended for testing)',\n            enum=[\"asr\", \"tts\", \"nlp\"]\n        ),\n        'language_code': Param(\n            default='en-US',\n            type='string',\n            description='Language code for processing'\n        ),\n        'text_input': Param(\n            default='Hello, this is a test message for NVIDIA Riva NLP analysis.',\n            type='string',\n            description='Text input for NLP or TTS operations'\n        ),\n    },\n) as dag:\n\n    test_task = NvidiaRivaOperator(\n        task_id='test_nvidia_riva_operator_task',\n        riva_server_url='localhost:50051',\n        operation_type=\"{{ params.operation_type }}\",\n        language_code=\"{{ params.language_code }}\",\n        text_input=\"{{ params.text_input }}\",\n    )",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport grpc\nimport json\nimport wave\nimport os\nfrom pathlib import Path\n\nclass NvidiaRivaOperator(BaseOperator):\n    \"\"\"\n    Operator for NVIDIA Riva conversational AI operations.\n\n    Supports speech-to-text (ASR), text-to-speech (TTS), and NLP inference\n    using NVIDIA Riva gRPC API.\n    \"\"\"\n\n    template_fields: Sequence[str] = [\n        'operation_type', 'language_code', 'text_input', 'audio_file_path',\n        'output_path', 'model_name'\n    ]\n    ui_color: str = \"#76B900\"",
       "metadata": {
         "component_name": "NvidiaRivaOperator",
         "component_type": "operator",
@@ -40,228 +38,723 @@
         "subcategory": "speech-ai",
         "framework": "nvidia_riva",
         "generation_date": "2026-01-27",
+        "generation_status": "success"
+      },
+      "success_score": 175,
+      "pattern_type": "ml_operator_with_runtime_params",
+      "indexed_at": "2026-01-27T00:00:00.000000",
+      "code_patterns": {
+        "imports": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport grpc",
+        "class_definition": "class NvidiaRivaOperator(BaseOperator):",
+        "param_import_pattern": "try:\n    from airflow.sdk import Param  # Airflow 3.x\nexcept ImportError:\n    from airflow.models.param import Param  # Airflow 2.x fallback"
+      }
+    },
+    {
+      "id": "api_health_sensor_success_2026_01_28",
+      "component_name": "ApiHealthSensor",
+      "category": "monitoring",
+      "subcategory": "api-health",
+      "framework": "requests",
+      "component_type": "sensor",
+      "sensor_code": "try:\n    from airflow.sdk.bases.sensor import BaseSensor\nexcept ImportError:\n    from airflow.sensors.base import BaseSensor\n\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport requests\nimport json\nfrom datetime import timedelta\n\n\nclass ApiHealthSensor(BaseSensor):\n    \"\"\"\n    Sensor that monitors API endpoint health and waits for successful response before proceeding.\n\n    This sensor performs HTTP GET requests to a specified endpoint and checks for:\n    - Expected HTTP status code\n    - Optional response body validation using JSON path\n    - Request timeout handling\n    \"\"\"\n\n    template_fields: Sequence[str] = ['endpoint_url', 'expected_status_code', 'headers', 'response_check']\n    ui_color: str = \"#50C878\"\n\n    def __init__(\n        self,\n        endpoint_url: str,\n        expected_status_code: int = 200,\n        request_timeout: int = 30,\n        headers: Optional[Dict[str, str]] = None,\n        response_check: Optional[str] = None,\n        poke_interval: int = 60,\n        timeout: int = 300,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.endpoint_url = endpoint_url\n        self.expected_status_code = expected_status_code\n        self.request_timeout = request_timeout\n        self.headers = headers or {}\n        self.response_check = response_check\n\n    def poke(self, context: Dict[str, Any]) -> bool:\n        \"\"\"Check if API endpoint is healthy by making HTTP request.\"\"\"\n        self.log.info(f\"Checking API health for endpoint: {self.endpoint_url}\")\n\n        try:\n            if not self.endpoint_url or not isinstance(self.endpoint_url, str):\n                raise AirflowException(\"endpoint_url must be a non-empty string\")\n\n            response = requests.get(\n                url=self.endpoint_url,\n                headers=self.headers,\n                timeout=self.request_timeout,\n                allow_redirects=True\n            )\n\n            if response.status_code != self.expected_status_code:\n                self.log.warning(\n                    f\"Status code {response.status_code} does not match expected {self.expected_status_code}\"\n                )\n                return False\n\n            self.log.info(\"API health check passed successfully\")\n            return True\n\n        except requests.exceptions.Timeout:\n            self.log.warning(f\"Request timeout after {self.request_timeout} seconds\")\n            return False\n\n        except requests.exceptions.ConnectionError as e:\n            self.log.warning(f\"Connection error: {str(e)}\")\n            return False\n\n        except requests.exceptions.RequestException as e:\n            raise AirflowException(f\"Request failed with error: {str(e)}\")",
+      "metadata": {
+        "component_name": "ApiHealthSensor",
+        "component_type": "sensor",
+        "category": "monitoring",
+        "subcategory": "api-health",
+        "framework": "requests",
+        "generation_date": "2026-01-28",
         "generation_status": "success",
-        "generation_metrics": {
-          "attempts": 1,
-          "model": "claude-sonnet-4-20250514",
-          "complexity_score": 27.0
-        },
-        "validation_results": {
-          "syntax_errors": 0,
-          "import_errors": 0,
-          "security_issues": 0,
-          "warnings": 0,
-          "airflow_compliance": true
-        },
         "component_features": {
-          "operation_types": [
-            "asr",
-            "tts",
-            "nlp"
-          ],
+          "poke_method": true,
           "runtime_parameters": true,
           "template_fields": true,
           "airflow_2x_compatible": true,
           "airflow_3x_compatible": true,
-          "mock_execution": true,
           "type_hints": true,
           "error_handling": "comprehensive",
-          "grpc_support": true,
-          "ssl_support": true
+          "json_path_validation": true,
+          "timeout_handling": true
         },
         "inputs": [
           {
-            "name": "riva_server_url",
+            "name": "endpoint_url",
             "type": "str",
             "required": true,
-            "description": "NVIDIA Riva server gRPC endpoint"
-          },
-          {
-            "name": "operation_type",
-            "type": "str",
-            "required": true,
-            "template_field": true,
-            "enum": ["asr", "tts", "nlp"]
-          },
-          {
-            "name": "audio_file_path",
-            "type": "str",
-            "required": false,
             "template_field": true
           },
           {
-            "name": "text_input",
-            "type": "str",
-            "required": false,
-            "template_field": true
-          },
-          {
-            "name": "language_code",
-            "type": "str",
-            "required": false,
-            "default": "en-US",
-            "template_field": true
-          },
-          {
-            "name": "sample_rate",
+            "name": "expected_status_code",
             "type": "int",
             "required": false,
-            "default": 16000
+            "default": 200,
+            "template_field": true
           },
           {
-            "name": "output_path",
+            "name": "request_timeout",
+            "type": "int",
+            "required": false,
+            "default": 30
+          },
+          {
+            "name": "headers",
+            "type": "dict",
+            "required": false,
+            "template_field": true
+          },
+          {
+            "name": "response_check",
             "type": "str",
             "required": false,
             "template_field": true
           },
           {
-            "name": "model_name",
-            "type": "str",
+            "name": "poke_interval",
+            "type": "int",
             "required": false,
-            "template_field": true
+            "default": 60
           },
           {
-            "name": "ssl_cert_path",
+            "name": "timeout",
+            "type": "int",
+            "required": false,
+            "default": 300
+          },
+          {
+            "name": "mode",
             "type": "str",
-            "required": false
+            "required": false,
+            "default": "poke"
           }
         ],
         "runtime_params": [
           {
-            "name": "operation_type",
+            "name": "endpoint_url",
             "type": "string",
-            "enum": ["asr", "tts", "nlp"],
-            "default": "nlp",
-            "description": "Select the Riva operation type (nlp recommended for testing)"
+            "default": "https://httpbin.org/status/200"
           },
           {
-            "name": "language_code",
-            "type": "string",
-            "default": "en-US",
-            "description": "Language code for processing"
-          },
-          {
-            "name": "text_input",
-            "type": "string",
-            "default": "Hello, this is a test message for NVIDIA Riva NLP analysis.",
-            "description": "Text input for NLP or TTS operations"
+            "name": "expected_status_code",
+            "type": "integer",
+            "default": 200
           }
         ],
         "dependencies": [
           "apache-airflow>=2.0.0",
-          "grpcio>=1.50.0",
-          "protobuf>=4.0.0"
+          "requests>=2.28.0"
         ],
         "success_factors": [
-          "Smart default selection (nlp instead of asr to avoid file requirements)",
-          "Comprehensive runtime parameters including text_input",
-          "Fallback import paths for operator in test DAG",
-          "Airflow 3.x Param import compatibility (try/except pattern)",
-          "Clear separation of test files (pytest warnings in header)",
-          "gRPC connection with SSL support",
-          "Mode-based execution (ASR, TTS, NLP)",
-          "Mock execution for testing without real Riva server"
+          "Dual import pattern for Airflow 2.x/3.x BaseSensor compatibility",
+          "Proper super().__init__ call with poke_interval, timeout, mode",
+          "poke() method returns boolean for sensor behavior",
+          "JSON path validation for response body checks",
+          "Graceful handling of timeouts and connection errors",
+          "Clear separation of terminal vs. retry-able errors"
         ],
-        "issues_encountered": [
-          {
-            "issue": "Default operation_type 'asr' required audio files",
-            "resolution": "Changed default to 'nlp' which only requires text_input",
-            "result": "Test DAG works out-of-the-box without file dependencies"
-          },
-          {
-            "issue": "Airflow 3.x deprecated airflow.models.param.Param",
-            "resolution": "Added try/except to use airflow.sdk.Param for Airflow 3.x",
-            "result": "Compatible with both Airflow 2.x and 3.x"
-          },
-          {
-            "issue": "pytest test file placed in dags folder caused import errors",
-            "resolution": "Added prominent header warning that test files should not be in dags/",
-            "result": "Clear separation of test files"
-          },
-          {
-            "issue": "Operator import failed in test DAG",
-            "resolution": "Added fallback import paths (same folder, custom_operators/, plugins/)",
-            "result": "Flexible deployment options"
-          }
-        ],
-        "testing_results": {
-          "dag_appeared_in_ui": true,
-          "import_errors": 0,
-          "execution_success": {
-            "nlp_mode": true,
-            "tts_mode": "requires_output_path",
-            "asr_mode": "requires_audio_file"
-          },
-          "runtime_params_functional": true,
-          "airflow_3x_tested": true
-        },
         "recommended_use_cases": [
-          "Speech-to-Text transcription pipelines",
-          "Text-to-Speech synthesis workflows",
-          "NLP analysis and entity extraction",
-          "Conversational AI applications",
-          "Voice-enabled data pipelines",
-          "Multi-language speech processing"
+          "Wait for API to become healthy before downstream tasks",
+          "Monitor microservice dependencies",
+          "Health check gating in CI/CD pipelines",
+          "Service readiness checks in Kubernetes workflows"
         ],
         "tags": [
-          "ml",
-          "speech-ai",
-          "nvidia",
-          "riva",
-          "asr",
-          "tts",
-          "nlp",
-          "grpc",
-          "conversational-ai",
-          "successful-generation",
-          "first-attempt-success",
+          "sensor",
+          "monitoring",
+          "api-health",
+          "http",
+          "requests",
           "airflow-3x-compatible"
-        ],
-        "rag_indexing": {
-          "searchable_text": "NVIDIA Riva Speech AI operator ML speech-to-text ASR text-to-speech TTS NLP inference gRPC conversational AI voice transcription runtime parameters Airflow operator",
-          "similarity_keywords": [
-            "machine learning",
-            "speech recognition",
-            "speech synthesis",
-            "natural language processing",
-            "voice transcription",
-            "audio processing",
-            "gRPC",
-            "NVIDIA",
-            "conversational AI"
-          ],
-          "pattern_category": "ml_operator_with_runtime_params"
-        }
+        ]
       },
-      "embedding_text": "Component: NvidiaRivaOperator\nType: operator\nCategory: ml / speech-ai\nFramework: nvidia_riva\nNVIDIA Riva Speech AI operator ML speech-to-text ASR text-to-speech TTS NLP inference gRPC conversational AI voice transcription runtime parameters Airflow operator\nFeatures:\noperation types (asr, tts, nlp) | runtime parameters | template fields | airflow 2x compatible | airflow 3x compatible | mock execution | type hints | error handling | grpc support | ssl support\nSuccess Factors:\nSmart default selection (nlp) | Comprehensive runtime parameters | Fallback import paths | Airflow 3.x Param compatibility | Mock execution for testing | gRPC with SSL support\nInputs:\nriva_server_url | operation_type | audio_file_path | text_input | language_code | sample_rate | output_path | model_name | ssl_cert_path\nRuntime Parameters:\noperation_type | language_code | text_input\nCode Preview:\nfrom airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport grpc\nimport json\nimport wave\nimport os\nfrom pathlib import Path\n\nclass NvidiaRivaOperator(BaseOperator):\n    template_fields: Sequence[str] = [\n        'operation_type', 'language_code', 'text_input', 'audio_file_path',\n        'output_path', 'model_name'\n    ]\n    ui_color: str = \"#76B900\"",
-      "success_score": 175,
-      "relevance_keywords": [
-        "machine learning",
-        "speech recognition",
-        "speech synthesis",
-        "natural language processing",
-        "voice transcription",
-        "audio processing",
-        "gRPC",
-        "NVIDIA",
-        "conversational AI",
-        "ASR",
-        "TTS",
-        "NLP"
-      ],
-      "pattern_type": "ml_operator_with_runtime_params",
-      "indexed_at": "2026-01-27T00:00:00.000000",
+      "success_score": 170,
+      "pattern_type": "monitoring_sensor_with_runtime_params",
+      "indexed_at": "2026-01-28T00:00:00.000000",
       "code_patterns": {
-        "__init__": "def __init__(\n        self,\n        riva_server_url: str,\n        operation_type: str,\n        audio_file_path: Optional[str] = None,\n        text_input: Optional[str] = None,\n        language_code: Optional[str] = \"en-US\",\n        sample_rate: Optional[int] = 16000,\n        output_path: Optional[str] = None,\n        model_name: Optional[str] = None,\n        ssl_cert_path: Optional[str] = None,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n\n        if not riva_server_url:\n            raise AirflowException(\"riva_server_url is required\")\n\n        # Validate operation_type if not a template\n        valid_operations = ['asr', 'tts', 'nlp']\n        if '{{' not in str(operation_type) and operation_type not in valid_operations:\n            raise AirflowException(f\"operation_type must be one of {valid_operations}\")\n\n        # Validate sample_rate\n        if sample_rate is not None and sample_rate <= 0:\n            raise AirflowException(\"sample_rate must be a positive integer\")\n\n        self.riva_server_url = riva_server_url\n        self.operation_type = operation_type\n        self.audio_file_path = audio_file_path\n        self.text_input = text_input\n        self.language_code = language_code\n        self.sample_rate = sample_rate\n        self.output_path = output_path\n        self.model_name = model_name\n        self.ssl_cert_path = ssl_cert_path\n\n        self.log.info(f\"Initialized NvidiaRivaOperator for {operation_type} operation\")",
-        "execute": "def execute(self, context: Dict[str, Any]) -> Any:\n        self.log.info(f\"Executing NvidiaRivaOperator {self.operation_type} operation\")\n\n        # Validate template fields after rendering\n        valid_operations = ['asr', 'tts', 'nlp']\n        if self.operation_type not in valid_operations:\n            raise AirflowException(f\"operation_type must be one of {valid_operations}\")\n\n        try:\n            channel = self._create_grpc_channel()\n\n            if self.operation_type == 'asr':\n                result = self._execute_asr(channel)\n            elif self.operation_type == 'tts':\n                result = self._execute_tts(channel, context)\n            elif self.operation_type == 'nlp':\n                result = self._execute_nlp(channel)\n            else:\n                raise AirflowException(f\"Unsupported operation type: {self.operation_type}\")\n\n            channel.close()\n            self.log.info(f\"Successfully completed {self.operation_type} operation\")\n            return result\n\n        except grpc.RpcError as e:\n            self.log.error(f\"gRPC error during {self.operation_type} operation: {e}\")\n            raise AirflowException(f\"Riva gRPC error: {e}\")\n        except Exception as e:\n            self.log.error(f\"Error during {self.operation_type} operation: {e}\")\n            raise AirflowException(f\"Riva operation failed: {e}\")",
-        "imports": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport grpc\nimport json\nimport wave\nimport os\nfrom pathlib import Path",
-        "class_definition": "class NvidiaRivaOperator(BaseOperator):",
-        "template_fields": "template_fields: Sequence[str] = [\n        'operation_type', 'language_code', 'text_input', 'audio_file_path',\n        'output_path', 'model_name'\n    ]",
-        "grpc_channel": "def _create_grpc_channel(self) -> grpc.Channel:\n        try:\n            if self.ssl_cert_path and Path(self.ssl_cert_path).exists():\n                with open(self.ssl_cert_path, 'rb') as f:\n                    credentials = grpc.ssl_channel_credentials(f.read())\n                channel = grpc.secure_channel(self.riva_server_url, credentials)\n            else:\n                channel = grpc.insecure_channel(self.riva_server_url)\n\n            grpc.channel_ready_future(channel).result(timeout=10)\n            self.log.info(f\"Successfully connected to Riva server: {self.riva_server_url}\")\n            return channel\n\n        except grpc.FutureTimeoutError:\n            raise AirflowException(f\"Timeout connecting to Riva server: {self.riva_server_url}\")\n        except Exception as e:\n            raise AirflowException(f\"Failed to connect to Riva server: {e}\")",
-        "param_import_pattern": "# Import Param with Airflow 3.x compatibility\ntry:\n    from airflow.sdk import Param  # Airflow 3.x\nexcept ImportError:\n    from airflow.models.param import Param  # Airflow 2.x fallback",
-        "operator_import_pattern": "try:\n    from nvidia_riva_operator import NvidiaRivaOperator\nexcept ImportError:\n    try:\n        from custom_operators.nvidia_riva_operator import NvidiaRivaOperator\n    except ImportError:\n        try:\n            from plugins.nvidia_riva_operator import NvidiaRivaOperator\n        except ImportError:\n            raise ImportError(\"Could not import NvidiaRivaOperator\")"
-      }
+        "sensor_import": "try:\n    from airflow.sdk.bases.sensor import BaseSensor\nexcept ImportError:\n    from airflow.sensors.base import BaseSensor",
+        "class_definition": "class ApiHealthSensor(BaseSensor):",
+        "super_init": "super().__init__(\n    poke_interval=poke_interval,\n    timeout=timeout,\n    mode=mode,\n    **kwargs\n)",
+        "poke_method": "def poke(self, context: Dict[str, Any]) -> bool:\n    # Returns True when condition is met, False to continue poking"
+      },
+      "relevance_keywords": [
+        "sensor",
+        "monitoring",
+        "api health",
+        "http",
+        "requests",
+        "poke",
+        "status code",
+        "endpoint",
+        "health check"
+      ]
+    },
+    {
+      "id": "rest_api_hook_success_2026_01_28",
+      "component_name": "RestApiHook",
+      "category": "integration",
+      "subcategory": "http",
+      "framework": "requests",
+      "component_type": "hook",
+      "hook_code": "from airflow.hooks.base import BaseHook\nfrom airflow.models import Connection\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence, Union\nimport requests\nimport time\nimport base64\nfrom urllib.parse import urljoin\n\n\nclass RestApiHook(BaseHook):\n    \"\"\"\n    Hook for connecting to REST APIs with authentication, retry logic, and response handling.\n\n    This hook provides a standardized way to interact with REST APIs, supporting various\n    authentication methods, automatic retries, and comprehensive error handling.\n    \"\"\"\n\n    template_fields: Sequence[str] = ['endpoint', 'method']\n    ui_color: str = \"#f0ede4\"\n    conn_name_attr: str = 'conn_id'\n    conn_type: str = 'http'\n    hook_name: str = 'rest_api'\n\n    def __init__(\n        self,\n        conn_id: str = 'rest_api_default',\n        base_url: Optional[str] = None,\n        auth_type: str = 'none',\n        default_headers: Optional[Dict[str, str]] = None,\n        retry_count: int = 3,\n        timeout: int = 30\n    ):\n        super().__init__()\n        self.conn_id = conn_id\n        self.base_url = base_url\n        self.auth_type = auth_type\n        self.default_headers = default_headers or {}\n        self.retry_count = retry_count\n        self.timeout = timeout\n        self._connection = None\n        self._session = None\n\n    def get_conn(self) -> requests.Session:\n        \"\"\"Get or create HTTP session with authentication and default headers.\"\"\"\n        if self._session is not None:\n            return self._session\n\n        try:\n            conn = BaseHook.get_connection(self.conn_id)\n            self._session = self._create_session(conn)\n            self.log.info(f\"Connected to REST API at {self._get_base_url(conn)}\")\n            return self._session\n        except Exception as e:\n            raise AirflowException(f\"Failed to create REST API connection: {str(e)}\")",
+      "metadata": {
+        "component_name": "RestApiHook",
+        "component_type": "hook",
+        "category": "integration",
+        "subcategory": "http",
+        "framework": "requests",
+        "generation_date": "2026-01-28",
+        "generation_status": "success",
+        "component_features": {
+          "get_conn_method": true,
+          "connection_caching": true,
+          "runtime_parameters": true,
+          "template_fields": true,
+          "airflow_2x_compatible": true,
+          "airflow_3x_compatible": true,
+          "type_hints": true,
+          "error_handling": "comprehensive",
+          "authentication_types": [
+            "none",
+            "basic",
+            "bearer",
+            "api_key"
+          ],
+          "retry_logic": true,
+          "exponential_backoff": true,
+          "http_methods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH"
+          ],
+          "session_management": true
+        },
+        "inputs": [
+          {
+            "name": "conn_id",
+            "type": "str",
+            "required": false,
+            "default": "rest_api_default"
+          },
+          {
+            "name": "base_url",
+            "type": "str",
+            "required": false
+          },
+          {
+            "name": "auth_type",
+            "type": "str",
+            "required": false,
+            "default": "none",
+            "enum": [
+              "none",
+              "basic",
+              "bearer",
+              "api_key"
+            ]
+          },
+          {
+            "name": "default_headers",
+            "type": "dict",
+            "required": false
+          },
+          {
+            "name": "retry_count",
+            "type": "int",
+            "required": false,
+            "default": 3
+          },
+          {
+            "name": "timeout",
+            "type": "int",
+            "required": false,
+            "default": 30
+          }
+        ],
+        "runtime_params": [
+          {
+            "name": "endpoint",
+            "type": "string",
+            "default": "/health"
+          },
+          {
+            "name": "method",
+            "type": "string",
+            "default": "GET"
+          }
+        ],
+        "dependencies": [
+          "apache-airflow>=2.0.0",
+          "requests>=2.28.0"
+        ],
+        "success_factors": [
+          "Proper BaseHook inheritance with get_conn() implementation",
+          "conn_name_attr, conn_type, hook_name class attributes",
+          "Session caching for connection reuse",
+          "Multiple authentication methods (basic, bearer, api_key)",
+          "Retry logic with exponential backoff",
+          "Convenience methods for HTTP verbs (get, post, put, delete, patch)",
+          "Connection test method for validation",
+          "Session close method for cleanup"
+        ],
+        "recommended_use_cases": [
+          "REST API integration in operators",
+          "Shared API client across multiple tasks",
+          "Authentication-aware HTTP requests",
+          "Retry-enabled API calls"
+        ],
+        "tags": [
+          "hook",
+          "integration",
+          "http",
+          "rest-api",
+          "requests",
+          "authentication",
+          "retry",
+          "airflow-3x-compatible"
+        ]
+      },
+      "success_score": 180,
+      "pattern_type": "integration_hook_with_auth",
+      "indexed_at": "2026-01-28T00:00:00.000000",
+      "code_patterns": {
+        "hook_import": "from airflow.hooks.base import BaseHook",
+        "class_definition": "class RestApiHook(BaseHook):",
+        "class_attributes": "conn_name_attr: str = 'conn_id'\nconn_type: str = 'http'\nhook_name: str = 'rest_api'",
+        "get_conn_method": "def get_conn(self) -> requests.Session:\n    if self._session is not None:\n        return self._session\n    # Create and cache session",
+        "auth_patterns": {
+          "basic": "session.auth = (conn.login, conn.password)",
+          "bearer": "session.headers['Authorization'] = f'Bearer {conn.password}'",
+          "api_key": "session.headers[api_key_header] = api_key"
+        },
+        "retry_with_backoff": "for attempt in range(self.retry_count + 1):\n    try:\n        response = session.request(method, url, **kwargs)\n    except Exception:\n        time.sleep(2 ** attempt)  # Exponential backoff"
+      },
+      "relevance_keywords": [
+        "hook",
+        "integration",
+        "rest api",
+        "http",
+        "requests",
+        "authentication",
+        "bearer",
+        "api key",
+        "basic auth",
+        "retry",
+        "connection"
+      ]
+    },
+    {
+      "id": "s3fileoperator_success_2026_01_28",
+      "component_name": "S3FileOperator",
+      "category": "cloud",
+      "subcategory": "aws",
+      "framework": "boto3",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom airflow.providers.amazon.aws.hooks.s3 import S3Hook\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\n\n\nclass S3FileOperator(BaseOperator):\n    \"\"\"\n    Operator for AWS S3 file operations including upload, download, copy, and delete.\n    \n    This operator supports various S3 operations:\n    - upload: Upload a local file to S3\n    - download: Download an S3 object to local file\n    - copy: Copy an S3 object to another location\n    - delete: Delete an S3 object\n    \n    Args:\n        bucket_name: S3 bucket name\n        key: S3 object key\n        operation: Operation type (upload, download, copy, delete)\n        local_path: Local file path for upload or download operations\n        dest_bucket: Destination bucket for copy operation\n        dest_key: Destination key for copy operation\n        aws_conn_id: Airflow connection ID for AWS credentials\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['bucket_name', 'key', 'operation', 'local_path', 'dest_bucket', 'dest_key']\n    ui_color: str = \"#ff9900\"\n    \n    def __init__(\n        self,\n        bucket_name: str,\n        key: str,\n        operation: str,\n        local_path: Optional[str] = None,\n        dest_bucket: Optional[str] = None,\n        dest_key: Optional[str] = None,\n        aws_conn_id: str = 'aws_default',\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        self.bucket_name = bucket_name\n        self.key = key\n        self.operation = operation\n        self.local_path = local_path\n        self.dest_bucket = dest_bucket\n        self.dest_key = dest_key\n        self.aws_conn_id = aws_conn_id\n        \n        # Validate operation if not a template\n        valid_operations = ['upload', 'download', 'copy', 'delete']\n        if '{{' not in str(operation) and operation not in valid_operations:\n            raise AirflowException(f\"Invalid operation '{operation}'. Must be one of:",
+      "metadata": {
+        "component_name": "S3FileOperator",
+        "component_type": "operator",
+        "category": "cloud",
+        "subcategory": "aws",
+        "framework": "boto3",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "cloud_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.666809",
+      "relevance_keywords": [
+        "cloud",
+        "aws",
+        "operator",
+        "boto3",
+        "s3fileoperator"
+      ]
+    },
+    {
+      "id": "slacknotificationoperator_success_2026_01_28",
+      "component_name": "SlackNotificationOperator",
+      "category": "notification",
+      "subcategory": "messaging",
+      "framework": "slack-sdk",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom airflow.providers.slack.hooks.slack_webhook import SlackWebhookHook\nfrom airflow.providers.slack.operators.slack_webhook import SlackWebhookOperator\nfrom typing import Dict, Any, Optional, List, Sequence, Union\nimport json\n\n\nclass SlackNotificationOperator(BaseOperator):\n    \"\"\"\n    Operator for sending notifications to Slack channels with support for formatted messages and attachments.\n    \n    This operator sends messages to Slack channels using the Slack webhook API. It supports\n    custom usernames, emoji icons, and rich attachments for enhanced messaging capabilities.\n    \n    Args:\n        channel: Slack channel to send message to (e.g., '#general' or '@username')\n        message: Message text to send to the channel\n        username: Bot username to display (optional)\n        icon_emoji: Emoji icon for the bot (e.g., ':robot_face:') (optional)\n        attachments: List of Slack attachments for rich formatting (optional)\n        slack_conn_id: Airflow connection ID for Slack webhook (default: 'slack_default')\n    \n    Example:\n        slack_notification = SlackNotificationOperator(\n            task_id='send_slack_notification',\n            channel='#alerts',\n            message='Task completed successfully!',\n            username='Airflow Bot',\n            icon_emoji=':white_check_mark:',\n            slack_conn_id='slack_webhook'\n        )\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['channel', 'message', 'username', 'icon_emoji', 'attachments']\n    ui_color: str = \"#36C5F0\"\n    \n    def __init__(\n        self,\n        channel: str,\n        message: str,\n        username: Optional[str] = None,\n        icon_emoji: Optional[str] = None,\n        attachments: Optional[List[Dict[str, Any]]] = None,\n        slack_conn_id: str = 'slack_default',\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        # Validate required parameters (skip if Jinja templ",
+      "metadata": {
+        "component_name": "SlackNotificationOperator",
+        "component_type": "operator",
+        "category": "notification",
+        "subcategory": "messaging",
+        "framework": "slack-sdk",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "notification_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.667477",
+      "relevance_keywords": [
+        "notification",
+        "messaging",
+        "operator",
+        "slack-sdk",
+        "slacknotificationoperator"
+      ]
+    },
+    {
+      "id": "postgresqueryoperator_success_2026_01_28",
+      "component_name": "PostgresQueryOperator",
+      "category": "database",
+      "subcategory": "postgresql",
+      "framework": "psycopg2",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom airflow.providers.postgres.hooks.postgres import PostgresHook\nfrom typing import Dict, Any, Optional, Sequence, Union\nimport logging\n\nclass PostgresQueryOperator(BaseOperator):\n    \"\"\"\n    Operator for executing SQL queries on PostgreSQL databases with parameterized queries and result handling.\n    \n    This operator connects to a PostgreSQL database and executes SQL queries with support for\n    parameterized queries, transaction control, and result handling.\n    \n    Args:\n        sql (str): SQL query to execute\n        parameters (dict, optional): Query parameters for parameterized queries\n        autocommit (bool, optional): Whether to autocommit the transaction. Defaults to True\n        postgres_conn_id (str, optional): Airflow connection ID for PostgreSQL. Defaults to 'postgres_default'\n        database (str, optional): Database name to connect to. If not provided, uses connection default\n        **kwargs: Additional arguments passed to BaseOperator\n    \n    Example:\n        >>> operator = PostgresQueryOperator(\n        ...     task_id='run_query',\n        ...     sql=\"SELECT * FROM users WHERE city = %(city)s\",\n        ...     parameters={'city': 'New York'},\n        ...     postgres_conn_id='my_postgres_conn'\n        ... )\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['sql', 'parameters']\n    ui_color: str = \"#336791\"\n    \n    def __init__(\n        self,\n        sql: str,\n        parameters: Optional[Dict[str, Any]] = None,\n        autocommit: bool = True,\n        postgres_conn_id: str = 'postgres_default',\n        database: Optional[str] = None,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        # Validate sql parameter (skip if Jinja template)\n        if '{{' not in str(sql) and not sql.strip():\n            raise AirflowException(\"SQL query cannot be empty\")\n        \n        # Validate parameters (skip if Jinja template)\n        if para",
+      "metadata": {
+        "component_name": "PostgresQueryOperator",
+        "component_type": "operator",
+        "category": "database",
+        "subcategory": "postgresql",
+        "framework": "psycopg2",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "database_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.667904",
+      "relevance_keywords": [
+        "database",
+        "postgresql",
+        "operator",
+        "psycopg2",
+        "postgresqueryoperator"
+      ]
+    },
+    {
+      "id": "datavalidationoperator_success_2026_01_28",
+      "component_name": "DataValidationOperator",
+      "category": "data-quality",
+      "subcategory": "validation",
+      "framework": "pandas",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, List, Sequence, Union\nimport pandas as pd\nimport re\nfrom pathlib import Path\nimport json\n\nclass DataValidationOperator(BaseOperator):\n    \"\"\"\n    Operator for validating data quality with configurable rules including null checks, \n    range validation, and regex patterns.\n    \n    This operator supports various validation rules:\n    - null_check: Check for null/missing values\n    - range_check: Validate numeric values within specified ranges\n    - regex_pattern: Validate string values against regex patterns\n    - unique_check: Check for duplicate values\n    - length_check: Validate string length constraints\n    \n    Args:\n        data_source (str): Path or connection to data source (CSV, JSON, or database connection)\n        validation_rules (list): List of validation rule dictionaries. Each rule should contain:\n            - column: Column name to validate\n            - rule_type: Type of validation (null_check, range_check, regex_pattern, unique_check, length_check)\n            - parameters: Rule-specific parameters\n        fail_on_error (bool): Whether to fail the task on validation errors. Default is True.\n        output_report (str): Optional path to save validation report as JSON\n    \n    Example validation_rules:\n        [\n            {\"column\": \"age\", \"rule_type\": \"range_check\", \"parameters\": {\"min\": 0, \"max\": 120}},\n            {\"column\": \"email\", \"rule_type\": \"regex_pattern\", \"parameters\": {\"pattern\": r\"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$\"}},\n            {\"column\": \"name\", \"rule_type\": \"null_check\", \"parameters\": {}},\n            {\"column\": \"id\", \"rule_type\": \"unique_check\", \"parameters\": {}}\n        ]\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['data_source', 'output_report', 'fail_on_error']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        data_source: str,\n        validation_rules: ",
+      "metadata": {
+        "component_name": "DataValidationOperator",
+        "component_type": "operator",
+        "category": "data-quality",
+        "subcategory": "validation",
+        "framework": "pandas",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "data-quality_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.668403",
+      "relevance_keywords": [
+        "data-quality",
+        "validation",
+        "operator",
+        "pandas",
+        "datavalidationoperator"
+      ]
+    },
+    {
+      "id": "jsontransformoperator_success_2026_01_28",
+      "component_name": "JsonTransformOperator",
+      "category": "data-processing",
+      "subcategory": "transformation",
+      "framework": "jmespath",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Sequence\nimport json\nimport jmespath\n\n\nclass JsonTransformOperator(BaseOperator):\n    \"\"\"\n    Operator for transforming JSON data using JMESPath expressions.\n    \n    This operator takes a JSON string and applies a JMESPath expression to transform\n    or extract data from it. JMESPath is a query language for JSON that allows you\n    to declaratively specify how to extract elements from a JSON document.\n    \n    Args:\n        input_json (str): Input JSON string to transform\n        expression (str): JMESPath expression to apply to the JSON data\n        \n    Returns:\n        Any: The result of applying the JMESPath expression to the input JSON\n        \n    Example:\n        >>> operator = JsonTransformOperator(\n        ...     task_id='transform_json',\n        ...     input_json='{\"users\": [{\"name\": \"John\", \"age\": 30}, {\"name\": \"Jane\", \"age\": 25}]}',\n        ...     expression='users[?age > `27`].name'\n        ... )\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['input_json', 'expression']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        input_json: str,\n        expression: str,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        # Store parameters\n        self.input_json = input_json\n        self.expression = expression\n        \n        # Validate non-template parameters or template parameters that don't contain Jinja\n        if '{{' not in str(input_json):\n            if not input_json or not input_json.strip():\n                raise AirflowException(\"input_json cannot be empty\")\n            \n            # Validate JSON format\n            try:\n                json.loads(input_json)\n            except json.JSONDecodeError as e:\n                raise AirflowException(f\"Invalid JSON format in input_json: {e}\")\n        \n        if '{{' not in str(expression):\n            if not expression or not expres",
+      "metadata": {
+        "component_name": "JsonTransformOperator",
+        "component_type": "operator",
+        "category": "data-processing",
+        "subcategory": "transformation",
+        "framework": "jmespath",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "data-processing_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.668764",
+      "relevance_keywords": [
+        "data-processing",
+        "transformation",
+        "operator",
+        "jmespath",
+        "jsontransformoperator"
+      ]
+    },
+    {
+      "id": "filecleanupoperator_success_2026_01_28",
+      "component_name": "FileCleanupOperator",
+      "category": "utility",
+      "subcategory": "filesystem",
+      "framework": "builtin",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\nfrom datetime import datetime, timedelta\nimport os\nimport glob\nimport fnmatch\n\n\nclass FileCleanupOperator(BaseOperator):\n    \"\"\"\n    Operator for cleaning up temporary files and directories with age-based and pattern-based filtering.\n    \n    This operator can delete files based on age, pattern matching, and supports both recursive\n    and non-recursive directory traversal. It also supports dry-run mode for testing.\n    \n    Args:\n        directory (str): Directory to clean up\n        pattern (str, optional): File pattern to match for deletion (supports wildcards)\n        max_age_days (int, optional): Maximum age in days for files to keep\n        recursive (bool, optional): Whether to recursively clean subdirectories. Defaults to False\n        dry_run (bool, optional): If true, only log files that would be deleted. Defaults to False\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['directory', 'pattern', 'max_age_days', 'dry_run']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        directory: str,\n        pattern: Optional[str] = None,\n        max_age_days: Optional[int] = None,\n        recursive: bool = False,\n        dry_run: bool = False,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        self.directory = directory\n        self.pattern = pattern\n        self.max_age_days = max_age_days\n        self.recursive = recursive\n        self.dry_run = dry_run\n        \n        # Validate non-template fields\n        if not isinstance(recursive, bool):\n            raise AirflowException(f\"recursive must be a boolean, got {type(recursive)}\")\n        \n        # Validate template fields only if they don't contain Jinja templates\n        if '{{' not in str(directory) and not directory:\n            raise AirflowException(\"directory parameter cannot be empty\")\n            ",
+      "metadata": {
+        "component_name": "FileCleanupOperator",
+        "component_type": "operator",
+        "category": "utility",
+        "subcategory": "filesystem",
+        "framework": "builtin",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "utility_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.669074",
+      "relevance_keywords": [
+        "utility",
+        "filesystem",
+        "operator",
+        "builtin",
+        "filecleanupoperator"
+      ]
+    },
+    {
+      "id": "httprequestoperator_success_2026_01_28",
+      "component_name": "HttpRequestOperator",
+      "category": "integration",
+      "subcategory": "http",
+      "framework": "requests",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence, Union\nimport requests\nfrom requests.auth import HTTPBasicAuth, HTTPDigestAuth\nimport json\n\n\nclass HttpRequestOperator(BaseOperator):\n    \"\"\"\n    Operator for making HTTP requests with support for all methods, headers, authentication, and response handling.\n    \n    This operator can make HTTP requests to any URL with configurable method, headers, data, timeout,\n    and SSL verification. It supports various authentication methods and provides comprehensive\n    response handling and logging.\n    \n    :param url: URL to send request to\n    :type url: str\n    :param method: HTTP method (GET, POST, PUT, DELETE, PATCH)\n    :type method: str\n    :param headers: HTTP headers to include in the request\n    :type headers: dict\n    :param data: Request body data (will be JSON serialized if dict)\n    :type data: dict\n    :param timeout: Request timeout in seconds\n    :type timeout: int\n    :param verify_ssl: Whether to verify SSL certificates\n    :type verify_ssl: bool\n    :param auth_type: Authentication type ('basic', 'digest', 'bearer')\n    :type auth_type: str\n    :param username: Username for authentication\n    :type username: str\n    :param password: Password for authentication\n    :type password: str\n    :param token: Bearer token for authentication\n    :type token: str\n    :param expected_status_codes: List of expected HTTP status codes for success\n    :type expected_status_codes: list\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['url', 'method', 'headers', 'data']\n    ui_color: str = \"#4CAF50\"\n    \n    def __init__(\n        self,\n        url: str,\n        method: str = 'GET',\n        headers: Optional[Dict[str, str]] = None,\n        data: Optional[Union[Dict[str, Any], str]] = None,\n        timeout: int = 30,\n        verify_ssl: bool = True,\n        auth_type: Optional[str] = None,\n        username: Optional[str] = None,\n       ",
+      "metadata": {
+        "component_name": "HttpRequestOperator",
+        "component_type": "operator",
+        "category": "integration",
+        "subcategory": "http",
+        "framework": "requests",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "integration_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.669493",
+      "relevance_keywords": [
+        "integration",
+        "http",
+        "operator",
+        "requests",
+        "httprequestoperator"
+      ]
+    },
+    {
+      "id": "s3keysensor_success_2026_01_28",
+      "component_name": "S3KeySensor",
+      "category": "cloud",
+      "subcategory": "aws",
+      "framework": "boto3",
+      "component_type": "sensor",
+      "sensor_code": "from airflow.sensors.base import BaseSensor\nfrom airflow.providers.amazon.aws.hooks.s3 import S3Hook\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom datetime import datetime, timedelta\nimport fnmatch\n\n\nclass S3KeySensor(BaseSensor):\n    \"\"\"\n    Sensor that waits for a key to appear in an S3 bucket.\n    \n    This sensor polls an S3 bucket for the existence of a specific key.\n    It supports wildcard matching and custom check functions for flexible\n    key detection patterns.\n    \n    Args:\n        bucket_name (str): S3 bucket name to monitor\n        bucket_key (str): S3 key to wait for\n        wildcard_match (bool): Whether to use wildcard matching for key. Defaults to False\n        aws_conn_id (str): Airflow connection ID for AWS. Defaults to 'aws_default'\n        check_fn (str): Custom check function name. Defaults to None\n        poke_interval (int): Time in seconds between pokes. Defaults to 60\n        timeout (int): Maximum time to wait in seconds. Defaults to 3600\n        mode (str): How the sensor operates ('poke' or 'reschedule'). Defaults to 'poke'\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['bucket_name', 'bucket_key']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        bucket_name: str,\n        bucket_key: str,\n        wildcard_match: bool = False,\n        aws_conn_id: str = 'aws_default',\n        check_fn: Optional[str] = None,\n        poke_interval: int = 60,\n        timeout: int = 3600,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.bucket_name = bucket_name\n        self.bucket_key = bucket_key\n        self.wildcard_match = wildcard_match\n        self.aws_conn_id = aws_conn_id\n        self.check_fn = check_fn\n        self._s3_hook = None\n    \n    @property\n    def s3_hook(self) -> S3Hook:\n        \"\"\"Lazy i",
+      "metadata": {
+        "component_name": "S3KeySensor",
+        "component_type": "sensor",
+        "category": "cloud",
+        "subcategory": "aws",
+        "framework": "boto3",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "cloud_sensor_pattern",
+      "indexed_at": "2026-01-28T15:32:51.669856",
+      "relevance_keywords": [
+        "cloud",
+        "aws",
+        "sensor",
+        "boto3",
+        "s3keysensor"
+      ]
+    },
+    {
+      "id": "databaserecordsensor_success_2026_01_28",
+      "component_name": "DatabaseRecordSensor",
+      "category": "database",
+      "subcategory": "sql",
+      "framework": "sqlalchemy",
+      "component_type": "sensor",
+      "sensor_code": "from airflow.sensors.base import BaseSensor\nfrom airflow.hooks.base import BaseHook\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport sqlparse\n\nclass DatabaseRecordSensor(BaseSensor):\n    \"\"\"\n    Sensor that waits for a record to exist in a database table based on SQL condition.\n    \n    This sensor polls a database table and checks if records matching the specified\n    SQL condition exist. The sensor succeeds when the expected number of records\n    is found.\n    \n    Args:\n        table (str): Database table name to query\n        sql_condition (str): SQL WHERE condition to check for records\n        conn_id (str, optional): Airflow connection ID for database. Defaults to 'default_db'\n        expected_count (int, optional): Minimum number of records expected. Defaults to 1\n        poke_interval (int, optional): Time in seconds between pokes. Defaults to 60\n        timeout (int, optional): Time in seconds before timing out. Defaults to 3600\n        mode (str, optional): How the sensor operates ('poke' or 'reschedule'). Defaults to 'poke'\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['table', 'sql_condition', 'conn_id']\n    ui_color: str = \"#87CEEB\"\n    \n    def __init__(\n        self,\n        table: str,\n        sql_condition: str,\n        conn_id: str = 'default_db',\n        expected_count: int = 1,\n        poke_interval: int = 60,\n        timeout: int = 3600,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.table = table\n        self.sql_condition = sql_condition\n        self.conn_id = conn_id\n        self.expected_count = expected_count\n        self._hook = None\n    \n    def _get_hook(self):\n        \"\"\"Get database hook based on connection type.\"\"\"\n        if self._hook is None:\n            try:\n                connection = BaseHook.get_connect",
+      "metadata": {
+        "component_name": "DatabaseRecordSensor",
+        "component_type": "sensor",
+        "category": "database",
+        "subcategory": "sql",
+        "framework": "sqlalchemy",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "database_sensor_pattern",
+      "indexed_at": "2026-01-28T15:32:51.670137",
+      "relevance_keywords": [
+        "database",
+        "sql",
+        "sensor",
+        "sqlalchemy",
+        "databaserecordsensor"
+      ]
+    },
+    {
+      "id": "rediskeysensor_success_2026_01_28",
+      "component_name": "RedisKeySensor",
+      "category": "cache",
+      "subcategory": "redis",
+      "framework": "redis",
+      "component_type": "sensor",
+      "sensor_code": "from airflow.sensors.base import BaseSensor\nfrom airflow.exceptions import AirflowException\nfrom airflow.hooks.base import BaseHook\nfrom typing import Dict, Any, Optional, Sequence\nimport redis\n\n\nclass RedisKeySensor(BaseSensor):\n    \"\"\"\n    Sensor that waits for a key to exist in Redis with optional value checking.\n    \n    This sensor will poke Redis at regular intervals to check if a specified key exists.\n    Optionally, it can also verify that the key contains an expected value.\n    \n    Args:\n        key: Redis key to wait for\n        expected_value: Expected value for the key (optional)\n        redis_conn_id: Airflow connection ID for Redis (default: 'redis_default')\n        db: Redis database number (default: 0)\n        poke_interval: Time in seconds between pokes (default: 60)\n        timeout: Maximum time to wait in seconds (default: 60*60*24*7)\n        mode: How the sensor operates - 'poke' or 'reschedule' (default: 'poke')\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['key', 'expected_value']\n    ui_color: str = \"#dc143c\"\n    \n    def __init__(\n        self,\n        key: str,\n        expected_value: Optional[str] = None,\n        redis_conn_id: str = 'redis_default',\n        db: int = 0,\n        poke_interval: int = 60,\n        timeout: int = 60 * 60 * 24 * 7,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.key = key\n        self.expected_value = expected_value\n        self.redis_conn_id = redis_conn_id\n        self.db = db\n        self._redis_client = None\n    \n    def _get_redis_client(self) -> redis.Redis:\n        \"\"\"\n        Get Redis client using Airflow connection.\n        \n        Returns:\n            redis.Redis: Redis client instance\n        \"\"\"\n        if self._redis_client is None:\n            try:\n                connection = BaseHook.get_connection(self.redis_conn_id)\n      ",
+      "metadata": {
+        "component_name": "RedisKeySensor",
+        "component_type": "sensor",
+        "category": "cache",
+        "subcategory": "redis",
+        "framework": "redis",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "cache_sensor_pattern",
+      "indexed_at": "2026-01-28T15:32:51.670381",
+      "relevance_keywords": [
+        "cache",
+        "redis",
+        "sensor",
+        "redis",
+        "rediskeysensor"
+      ]
+    },
+    {
+      "id": "filepatternsensor_success_2026_01_28",
+      "component_name": "FilePatternSensor",
+      "category": "utility",
+      "subcategory": "filesystem",
+      "framework": "builtin",
+      "component_type": "sensor",
+      "sensor_code": "from airflow.sensors.base import BaseSensor\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nfrom pathlib import Path\nimport glob\n\n\nclass FilePatternSensor(BaseSensor):\n    \"\"\"\n    Sensor that waits for files matching a glob pattern to appear in a directory.\n    \n    This sensor monitors a specified directory for files matching a given glob pattern.\n    It can optionally check for a minimum number of files and verify that files\n    have content (size > 0).\n    \n    Args:\n        directory (str): Directory to monitor for files\n        pattern (str): Glob pattern to match files (e.g., '*.txt', 'data_*.csv')\n        min_files (int, optional): Minimum number of files that must match. Defaults to 1\n        check_size (bool, optional): Whether to check that files have size > 0. Defaults to True\n        poke_interval (int, optional): Time in seconds between pokes. Defaults to 60\n        timeout (int, optional): Maximum time to wait in seconds. Defaults to 3600 (1 hour)\n        mode (str, optional): How the sensor operates ('poke' or 'reschedule'). Defaults to 'poke'\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['directory', 'pattern']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        directory: str,\n        pattern: str,\n        min_files: int = 1,\n        check_size: bool = True,\n        poke_interval: int = 60,\n        timeout: int = 3600,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.directory = directory\n        self.pattern = pattern\n        self.min_files = min_files\n        self.check_size = check_size\n    \n    def poke(self, context: Dict[str, Any]) -> bool:\n        \"\"\"\n        Check if files matching the pattern exist in the directory.\n        \n        Args:\n            context: Airflow context dictionary\n            \n   ",
+      "metadata": {
+        "component_name": "FilePatternSensor",
+        "component_type": "sensor",
+        "category": "utility",
+        "subcategory": "filesystem",
+        "framework": "builtin",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "utility_sensor_pattern",
+      "indexed_at": "2026-01-28T15:32:51.670592",
+      "relevance_keywords": [
+        "utility",
+        "filesystem",
+        "sensor",
+        "builtin",
+        "filepatternsensor"
+      ]
+    },
+    {
+      "id": "sqsmessagesensor_success_2026_01_28",
+      "component_name": "SqsMessageSensor",
+      "category": "cloud",
+      "subcategory": "aws",
+      "framework": "boto3",
+      "component_type": "sensor",
+      "sensor_code": "from airflow.sensors.base import BaseSensor\nfrom airflow.exceptions import AirflowException\nfrom airflow.providers.amazon.aws.hooks.sqs import SqsHook\nfrom typing import Dict, Any, Optional, Sequence\nfrom datetime import datetime, timedelta\n\n\nclass SqsMessageSensor(BaseSensor):\n    \"\"\"\n    Sensor that waits for a message to arrive in an AWS SQS queue.\n    \n    This sensor polls an SQS queue at regular intervals and succeeds when\n    at least one message is available in the queue.\n    \n    Args:\n        queue_url: SQS queue URL to monitor\n        max_messages: Maximum number of messages to receive (1-10)\n        wait_time_seconds: Long polling wait time in seconds (0-20)\n        visibility_timeout: Message visibility timeout in seconds\n        aws_conn_id: Airflow connection ID for AWS credentials\n        poke_interval: Time in seconds between pokes\n        timeout: Maximum time to wait for messages\n        mode: Sensor mode ('poke' or 'reschedule')\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['queue_url']\n    ui_color: str = \"#ff9900\"\n    \n    def __init__(\n        self,\n        queue_url: str,\n        max_messages: int = 1,\n        wait_time_seconds: int = 0,\n        visibility_timeout: Optional[int] = None,\n        aws_conn_id: str = 'aws_default',\n        poke_interval: int = 30,\n        timeout: int = 60 * 60 * 24,\n        mode: str = 'poke',\n        **kwargs\n    ):\n        super().__init__(\n            poke_interval=poke_interval,\n            timeout=timeout,\n            mode=mode,\n            **kwargs\n        )\n        self.queue_url = queue_url\n        self.max_messages = max_messages\n        self.wait_time_seconds = wait_time_seconds\n        self.visibility_timeout = visibility_timeout\n        self.aws_conn_id = aws_conn_id\n        self._sqs_hook = None\n    \n    def _get_sqs_hook(self) -> SqsHook:\n        \"\"\"Get SQS hook with lazy initialization.\"\"\"\n        if self._sqs_hook is None:\n            self._sqs_hook = SqsHook(aws_conn_id=self.aws_conn_id)\n  ",
+      "metadata": {
+        "component_name": "SqsMessageSensor",
+        "component_type": "sensor",
+        "category": "cloud",
+        "subcategory": "aws",
+        "framework": "boto3",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "cloud_sensor_pattern",
+      "indexed_at": "2026-01-28T15:32:51.670797",
+      "relevance_keywords": [
+        "cloud",
+        "aws",
+        "sensor",
+        "boto3",
+        "sqsmessagesensor"
+      ]
+    },
+    {
+      "id": "emailnotificationoperator_success_2026_01_28",
+      "component_name": "EmailNotificationOperator",
+      "category": "notification",
+      "subcategory": "email",
+      "framework": "smtplib",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom airflow.hooks.base import BaseHook\nfrom airflow.utils.email import send_email\nfrom typing import Dict, Any, Optional, Sequence\nimport smtplib\nfrom email.mime.text import MIMEText\nfrom email.mime.multipart import MIMEMultipart\nfrom email.mime.base import MIMEBase\nfrom email import encoders\nimport os\nfrom pathlib import Path\n\n\nclass EmailNotificationOperator(BaseOperator):\n    \"\"\"\n    Operator for sending email notifications with HTML support and attachments.\n    \n    This operator sends email notifications using SMTP configuration from Airflow connections.\n    Supports both plain text and HTML email bodies with optional file attachments.\n    \n    Args:\n        to (str): Recipient email address\n        subject (str): Email subject line\n        body (str): Email body content (plain text or HTML)\n        html (bool, optional): Whether body content is HTML format. Defaults to False.\n        smtp_conn_id (str, optional): Airflow connection ID for SMTP configuration. \n                                     Defaults to 'smtp_default'.\n        attachments (list, optional): List of file paths to attach to email\n        cc (str, optional): CC email addresses (comma-separated)\n        bcc (str, optional): BCC email addresses (comma-separated)\n    \n    Example:\n        email_task = EmailNotificationOperator(\n            task_id='send_notification',\n            to='user@example.com',\n            subject='Task Completed',\n            body='<h1>Task finished successfully</h1>',\n            html=True,\n            smtp_conn_id='my_smtp_conn'\n        )\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['to', 'subject', 'body', 'cc', 'bcc']\n    ui_color: str = \"#e8f4fd\"\n    \n    def __init__(\n        self,\n        to: str,\n        subject: str,\n        body: str,\n        html: bool = False,\n        smtp_conn_id: str = 'smtp_default',\n        attachments: Optional[list] = None,\n        cc: Optiona",
+      "metadata": {
+        "component_name": "EmailNotificationOperator",
+        "component_type": "operator",
+        "category": "notification",
+        "subcategory": "email",
+        "framework": "smtplib",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "notification_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.671051",
+      "relevance_keywords": [
+        "notification",
+        "email",
+        "operator",
+        "smtplib",
+        "emailnotificationoperator"
+      ]
+    },
+    {
+      "id": "bashcommandoperator_success_2026_01_28",
+      "component_name": "BashCommandOperator",
+      "category": "utility",
+      "subcategory": "shell",
+      "framework": "subprocess",
+      "component_type": "operator",
+      "operator_code": "from airflow.models import BaseOperator\nfrom airflow.exceptions import AirflowException\nfrom typing import Dict, Any, Optional, Sequence\nimport subprocess\nimport os\nfrom pathlib import Path\n\n\nclass BashCommandOperator(BaseOperator):\n    \"\"\"\n    Operator for executing bash commands with environment variables and working directory support.\n    \n    This operator executes bash commands in a subprocess with optional environment variables,\n    working directory specification, and timeout control.\n    \n    Args:\n        bash_command (str): Bash command to execute\n        env (dict, optional): Environment variables for the command\n        cwd (str, optional): Working directory for command execution\n        timeout (int, optional): Command timeout in seconds\n    \"\"\"\n    \n    template_fields: Sequence[str] = ['bash_command']\n    ui_color: str = \"#f0ede4\"\n    \n    def __init__(\n        self,\n        bash_command: str,\n        env: Optional[Dict[str, str]] = None,\n        cwd: Optional[str] = None,\n        timeout: Optional[int] = None,\n        **kwargs\n    ):\n        super().__init__(**kwargs)\n        \n        # Store parameters\n        self.bash_command = bash_command\n        self.env = env or {}\n        self.cwd = cwd\n        self.timeout = timeout\n        \n        # Validate non-template fields\n        if self.env and not isinstance(self.env, dict):\n            raise AirflowException(\"env parameter must be a dictionary\")\n            \n        if self.cwd and '{{' not in str(self.cwd):\n            cwd_path = Path(self.cwd)\n            if not cwd_path.exists():\n                raise AirflowException(f\"Working directory does not exist: {self.cwd}\")\n            if not cwd_path.is_dir():\n                raise AirflowException(f\"Working directory path is not a directory: {self.cwd}\")\n                \n        if self.timeout is not None:\n            if not isinstance(self.timeout, int) or self.timeout <= 0:\n                raise AirflowException(\"timeout must be a positive integer",
+      "metadata": {
+        "component_name": "BashCommandOperator",
+        "component_type": "operator",
+        "category": "utility",
+        "subcategory": "shell",
+        "framework": "subprocess",
+        "generation_date": "2026-01-28",
+        "generation_status": "success"
+      },
+      "success_score": 165,
+      "pattern_type": "utility_operator_pattern",
+      "indexed_at": "2026-01-28T15:32:51.671352",
+      "relevance_keywords": [
+        "utility",
+        "shell",
+        "operator",
+        "subprocess",
+        "bashcommandoperator"
+      ]
     }
   ],
-  "updated_at": "2026-01-27T00:00:00.000000"
+  "updated_at": "2026-01-28T15:32:51.671358",
+  "pattern_summary": {
+    "total_patterns": 18,
+    "by_component_type": {
+      "operator": 11,
+      "sensor": 6,
+      "hook": 1
+    },
+    "by_category": {
+      "ml": 2,
+      "monitoring": 1,
+      "integration": 2,
+      "cloud": 3,
+      "notification": 2,
+      "database": 2,
+      "data-quality": 1,
+      "data-processing": 1,
+      "utility": 3,
+      "cache": 1
+    }
+  }
 }
